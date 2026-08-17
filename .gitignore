@@ -1,0 +1,60 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Segredos e configurações locais
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# IDEs
+.vscode/
+.idea/
+*.code-workspace
+
+# Logs e temporários
+*.log
+*.tmp
+*.temp
+*.part
+logs/
+tmp/
+
+# Arquivos-fonte locais com a relação de fundos
+*.numbers
+*.xlsx
+*.xls
+
+# Downloads brutos e arquivos transitórios da CVM
+dados/cache_cvm/
+*.zip
+
+# DuckDB: ignorar bancos auxiliares e arquivos de trabalho.
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+# O banco filtrado abaixo é necessário para executar o app no Streamlit.
+!dados/fundos.duckdb
+
+# Artefatos de testes e saída
+outputs/
+dist/
+build/
