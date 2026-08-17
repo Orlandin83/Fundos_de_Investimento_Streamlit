@@ -28,7 +28,7 @@ BANCO = BASE_DIR / "dados" / "fundos.duckdb"
 CORES = ["#005CA9", "#00A859", "#F9A825", "#7B1FA2", "#D84315", "#00838F"]
 
 st.set_page_config(
-    page_title="Fundos CAIXA | Performance e Carteiras",
+    page_title="Fundos de Investimento | Performance e Carteiras",
     page_icon="📈",
     layout="wide",
 )
@@ -63,7 +63,7 @@ st.markdown(
     <div class="hero">
       <div class="hero-row">
         <div>
-          <h1>Fundos CAIXA</h1>
+          <h1>Fundos de Investimento</h1>
           <p>Performance histórica, composição de carteiras e fronteira eficiente.</p>
         </div>
         <div class="hero-author">Elaborado por:<br><strong>Fabricio Orlandin, CFP®</strong></div>
