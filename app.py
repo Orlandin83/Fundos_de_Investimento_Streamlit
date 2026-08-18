@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from analytics import (
+    ALOCACAO_MINIMA_FRONTEIRA,
     MINIMO_OBSERVACOES,
     calcular_fronteira_eficiente,
     carregar_cotas,
@@ -25,7 +26,11 @@ from analytics import (
 
 BASE_DIR = Path(__file__).resolve().parent
 BANCO = BASE_DIR / "dados" / "fundos.duckdb"
-CORES = ["#005CA9", "#00A859", "#F9A825", "#7B1FA2", "#D84315", "#00838F"]
+CORES = ["#66C3BC", "#A9D8D3", "#4A9F9A", "#D5DDDE", "#718A91", "#3A7D7A"]
+COR_PAINEL = "#30363D"
+COR_GRADE = "#444B53"
+COR_TEXTO = "#EDF1F2"
+COR_TEXTO_SECUNDARIO = "#AEB8BB"
 
 st.set_page_config(
     page_title="Fundos de Investimento | Performance e Carteiras",
@@ -36,29 +41,58 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .stApp { background: #f5f7fa; }
-    [data-testid="stHeader"] { background: rgba(245,247,250,.88); }
+    .stApp {
+        background:
+            radial-gradient(circle at 12% 0%, rgba(102,195,188,.08), transparent 28rem),
+            #252a30;
+    }
+    [data-testid="stHeader"] { background: rgba(37,42,48,.9); }
+    [data-testid="stToolbar"] { color: #aeb8bb; }
+    [data-testid="stMainBlockContainer"] { max-width: 1280px; padding-top: 2.2rem; }
     .hero {
-        padding: 1.8rem 2rem; border-radius: 18px; color: white;
-        background: linear-gradient(120deg, #003b70 0%, #006bb6 58%, #00a6a6 100%);
-        box-shadow: 0 12px 28px rgba(0,59,112,.18); margin-bottom: 1rem;
+        position: relative; overflow: hidden; padding: 2rem 2.2rem;
+        border: 1px solid #454c54; border-radius: 18px; color: #edf1f2;
+        background: linear-gradient(125deg, #343a41 0%, #2b3036 62%, #293b3d 100%);
+        box-shadow: 0 18px 42px rgba(10,13,16,.28); margin-bottom: 1.35rem;
+    }
+    .hero::after {
+        content: ""; position: absolute; width: 220px; height: 220px;
+        right: -72px; top: -112px; border: 38px solid rgba(102,195,188,.12);
+        border-radius: 50%;
     }
     .hero-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 2rem; }
-    .hero h1 { margin: 0; font-size: 2rem; }
-    .hero p { margin: .55rem 0 0; opacity: .9; }
-    .hero-author { text-align: right; font-size: .9rem; opacity: .9; white-space: nowrap; }
+    .hero h1 { margin: 0; font-size: 2rem; letter-spacing: -.025em; }
+    .hero p { margin: .55rem 0 0; color: #aeb8bb; }
+    .hero-author { z-index: 1; text-align: right; font-size: .86rem; color: #aeb8bb; white-space: nowrap; }
+    .hero-author strong { color: #7fd0ca; }
     @media (max-width: 700px) {
         .hero-row { flex-direction: column; gap: 1rem; }
         .hero-author { text-align: left; }
     }
+    h1, h2, h3, h4 { color: #f4f6f6 !important; letter-spacing: -.015em; }
+    p, label, [data-testid="stCaptionContainer"] { color: #aeb8bb; }
+    [data-testid="stWidgetLabel"] p { color: #dce2e3; }
+    button[data-baseweb="tab"] { color: #aeb8bb; }
+    button[data-baseweb="tab"][aria-selected="true"] { color: #7fd0ca; }
+    [data-baseweb="tab-highlight"] { background-color: #66c3bc; }
+    [data-baseweb="input"], [data-baseweb="select"] > div,
+    [data-testid="stNumberInputContainer"] {
+        background: #30363d !important; border-color: #4b535c !important;
+    }
+    [data-baseweb="input"] input { color: #edf1f2; }
+    [data-testid="stDataFrame"] { border: 1px solid #414850; border-radius: 10px; overflow: hidden; }
     .disclaimer {
         padding: .9rem 1rem; border-left: 4px solid #f9a825;
-        background: #fff8e1; border-radius: 8px; color: #4e4200;
+        background: #34383a; border-radius: 8px; color: #d8d1b7;
     }
     div[data-testid="stMetric"] {
-        background: white; border: 1px solid #e3e8ef; padding: .8rem 1rem;
-        border-radius: 12px;
+        background: linear-gradient(145deg, #343a41, #2d3339);
+        border: 1px solid #454c54; padding: .85rem 1rem; border-radius: 12px;
+        box-shadow: 0 8px 20px rgba(10,13,16,.12);
     }
+    div[data-testid="stMetricValue"] { color: #7fd0ca; }
+    [data-testid="stAlert"] { background: #30363d; border: 1px solid #454c54; }
+    hr { border-color: #414850 !important; }
     </style>
     <div class="hero">
       <div class="hero-row">
@@ -109,11 +143,12 @@ def grafico_linhas(dados: pd.DataFrame, titulo: str, eixo_y: str) -> go.Figure:
     )
     figura.update_layout(
         hovermode="x unified", legend_title_text="", height=510,
-        margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor="white",
-        plot_bgcolor="white",
+        margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor=COR_PAINEL,
+        plot_bgcolor=COR_PAINEL, font=dict(color=COR_TEXTO_SECUNDARIO),
+        title_font=dict(color=COR_TEXTO), legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
-    figura.update_xaxes(showgrid=False)
-    figura.update_yaxes(showgrid=True, gridcolor="#edf0f4", ticksuffix="")
+    figura.update_xaxes(showgrid=False, linecolor=COR_GRADE, zerolinecolor=COR_GRADE)
+    figura.update_yaxes(showgrid=True, gridcolor=COR_GRADE, zerolinecolor=COR_GRADE, ticksuffix="")
     return figura
 
 
@@ -296,6 +331,10 @@ with aba_carteira:
 
                 st.divider()
                 st.subheader("Fronteira eficiente de Markowitz")
+                st.caption(
+                    f"As carteiras otimizadas mantêm no mínimo "
+                    f"{ALOCACAO_MINIMA_FRONTEIRA:.0%} em cada fundo selecionado."
+                )
                 if len(carteira) < 2:
                     st.info("Selecione pelo menos dois fundos para calcular a fronteira.")
                 else:
@@ -313,14 +352,14 @@ with aba_carteira:
                             y=fronteira.carteiras_testadas["retorno"],
                             mode="markers", name="Diversificações testadas",
                             marker=dict(
-                                size=3, opacity=0.16, color="#8FA5B5", symbol="circle",
+                                size=3, opacity=0.2, color="#718A91", symbol="circle",
                             ),
                             hovertemplate="Risco: %{x:.2%}<br>Retorno esperado: %{y:.2%}<extra></extra>",
                         ))
                         figura.add_trace(go.Scatter(
                             x=fronteira.pontos["risco"], y=fronteira.pontos["retorno"],
                             mode="lines", name="Curva completa de mínima variância",
-                            line=dict(color="#005CA9", width=4),
+                            line=dict(color="#66C3BC", width=4),
                             hovertemplate="Risco: %{x:.2%}<br>Retorno esperado: %{y:.2%}<extra></extra>",
                         ))
                         figura.add_trace(go.Scatter(
@@ -329,8 +368,8 @@ with aba_carteira:
                             mode="markers", name="Fundos",
                             text=[nome_curto(nomes_por_cnpj[c], 24) for c in fronteira.riscos_anuais_fundos.index],
                             marker=dict(
-                                size=7, color="#667784", symbol="circle",
-                                line=dict(color="white", width=1),
+                                size=7, color="#A9D8D3", symbol="circle",
+                                line=dict(color=COR_PAINEL, width=1),
                             ),
                             hovertemplate="%{text}<br>Risco: %{x:.2%}<br>Retorno esperado: %{y:.2%}<extra></extra>",
                         ))
@@ -339,7 +378,7 @@ with aba_carteira:
                             mode="markers", name="Menor risco",
                             marker=dict(
                                 size=10, color="#3F7278", symbol="circle",
-                                line=dict(color="white", width=1.5),
+                                line=dict(color=COR_TEXTO, width=1.5),
                             ),
                             hovertemplate="Menor risco<br>Risco: %{x:.2%}<br>Retorno: %{y:.2%}<extra></extra>",
                         ))
@@ -348,15 +387,15 @@ with aba_carteira:
                             mode="markers", name="Maior retorno",
                             marker=dict(
                                 size=10, color="#8A7955", symbol="circle",
-                                line=dict(color="white", width=1.5),
+                                line=dict(color=COR_TEXTO, width=1.5),
                             ),
                             hovertemplate="Maior retorno<br>Risco: %{x:.2%}<br>Retorno: %{y:.2%}<extra></extra>",
                         ))
                         figura.add_trace(go.Scatter(
                             x=[risco_usuario], y=[retorno_usuario], mode="markers",
                             name="Sua alocação", marker=dict(
-                                size=10, color="#555E6D", symbol="circle",
-                                line=dict(color="white", width=1.5),
+                                size=10, color="#D5DDDE", symbol="circle",
+                                line=dict(color=COR_PAINEL, width=1.5),
                             ),
                             hovertemplate="Sua alocação<br>Risco: %{x:.2%}<br>Retorno: %{y:.2%}<extra></extra>",
                         ))
@@ -365,11 +404,14 @@ with aba_carteira:
                             xaxis_tickformat=".1%", yaxis_tickformat=".1%",
                             xaxis_title="Risco (volatilidade anualizada)",
                             yaxis_title="Retorno esperado anualizado", hovermode="closest",
-                            paper_bgcolor="white", plot_bgcolor="white",
+                            paper_bgcolor=COR_PAINEL, plot_bgcolor=COR_PAINEL,
+                            font=dict(color=COR_TEXTO_SECUNDARIO),
+                            title_font=dict(color=COR_TEXTO),
+                            legend=dict(bgcolor="rgba(0,0,0,0)"),
                             margin=dict(l=20, r=20, t=60, b=20),
                         )
-                        figura.update_xaxes(gridcolor="#edf0f4")
-                        figura.update_yaxes(gridcolor="#edf0f4")
+                        figura.update_xaxes(gridcolor=COR_GRADE, zerolinecolor=COR_GRADE)
+                        figura.update_yaxes(gridcolor=COR_GRADE, zerolinecolor=COR_GRADE)
                         st.plotly_chart(figura, width="stretch")
 
                         coluna_minimo, coluna_maximo = st.columns(2)
@@ -402,7 +444,8 @@ with aba_carteira:
                             sensíveis ao período escolhido. Resultados passados não representam
                             previsão ou garantia de rentabilidade futura e esta ferramenta não
                             constitui recomendação de investimento. A fronteira considera pesos
-                            estáticos, sem venda a descoberto; o histórico da carteira é uma
+                            estáticos, sem venda a descoberto, e alocação mínima de
+                            {ALOCACAO_MINIMA_FRONTEIRA:.0%} por fundo; o histórico da carteira é uma
                             simulação sem rebalanceamento. Mínimo de {MINIMO_OBSERVACOES}
                             retornos diários comuns.
                             </div>

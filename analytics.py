@@ -13,6 +13,7 @@ from scipy.optimize import minimize
 
 DIAS_UTEIS_ANO = 252
 MINIMO_OBSERVACOES = 60
+ALOCACAO_MINIMA_FRONTEIRA = 0.01
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ def _otimizar_minima_variancia(
     retornos_anuais: np.ndarray,
     covariancia_anual: np.ndarray,
     retorno_alvo: float | None = None,
+    alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
 ) -> np.ndarray:
     quantidade = len(retornos_anuais)
     escala_variancia = max(float(np.max(np.abs(covariancia_anual))), 1e-12)
@@ -136,22 +138,33 @@ def _otimizar_minima_variancia(
         lambda pesos: float(pesos @ covariancia_anual @ pesos) / escala_variancia,
         np.repeat(1.0 / quantidade, quantidade),
         method="SLSQP",
-        bounds=[(0.0, 1.0)] * quantidade,
+        bounds=[(alocacao_minima, 1.0)] * quantidade,
         constraints=restricoes,
         options={"ftol": 1e-12, "maxiter": 2_000},
     )
     if not resultado.success:
         raise RuntimeError(f"A otimização não convergiu: {resultado.message}")
-    pesos = np.clip(resultado.x, 0.0, 1.0)
-    return pesos / pesos.sum()
+    pesos = np.clip(resultado.x, alocacao_minima, 1.0)
+    excedente = np.maximum(pesos - alocacao_minima, 0.0)
+    restante = 1.0 - alocacao_minima * quantidade
+    if excedente.sum() <= 0:
+        return np.repeat(1.0 / quantidade, quantidade)
+    return alocacao_minima + restante * excedente / excedente.sum()
 
 
 def calcular_fronteira_eficiente(
-    cotas: pd.DataFrame, quantidade_pontos: int = 60, quantidade_simulacoes: int = 3_000
+    cotas: pd.DataFrame,
+    quantidade_pontos: int = 60,
+    quantidade_simulacoes: int = 3_000,
+    alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
 ) -> ResultadoFronteira:
-    """Calcula a fronteira long-only com média e covariância anualizadas."""
+    """Calcula a fronteira long-only com piso por fundo e dados anualizados."""
     if cotas.shape[1] < 2:
         raise ValueError("Selecione pelo menos dois fundos para a fronteira eficiente.")
+    if alocacao_minima < 0 or alocacao_minima * cotas.shape[1] >= 1.0:
+        raise ValueError(
+            "A alocação mínima deve ser positiva e permitir que os pesos totalizem 100%."
+        )
     retornos = cotas.pct_change(fill_method=None).dropna(how="any")
     if len(retornos) < MINIMO_OBSERVACOES:
         raise ValueError(
@@ -165,27 +178,33 @@ def calcular_fronteira_eficiente(
     if not np.isfinite(medias).all() or not np.isfinite(covariancia).all():
         raise ValueError("Os retornos não produziram estimativas financeiras válidas.")
 
-    pesos_minimo = _otimizar_minima_variancia(medias, covariancia)
+    pesos_minimo = _otimizar_minima_variancia(
+        medias, covariancia, alocacao_minima=alocacao_minima
+    )
     retorno_minimo = float(pesos_minimo @ medias)
     risco_minimo = _risco(pesos_minimo, covariancia)
 
     indice_maior_retorno = int(np.argmax(medias))
-    pesos_maximo = np.zeros(len(medias))
-    pesos_maximo[indice_maior_retorno] = 1.0
-    retorno_maximo = float(medias[indice_maior_retorno])
+    pesos_maximo = np.full(len(medias), alocacao_minima)
+    pesos_maximo[indice_maior_retorno] += 1.0 - alocacao_minima * len(medias)
+    retorno_maximo = float(pesos_maximo @ medias)
     risco_maximo = _risco(pesos_maximo, covariancia)
 
     # Percorre toda a curva de mínima variância: do ativo/carteira com menor
     # retorno esperado, passa pelo ponto de menor risco e segue até o maior retorno.
     # O ramo a partir do menor risco é a fronteira eficiente em sentido estrito.
-    retorno_extremo_inferior = float(np.min(medias))
+    pesos_extremo_inferior = np.full(len(medias), alocacao_minima)
+    pesos_extremo_inferior[int(np.argmin(medias))] += 1.0 - alocacao_minima * len(medias)
+    retorno_extremo_inferior = float(pesos_extremo_inferior @ medias)
     alvos = np.linspace(
         retorno_extremo_inferior, retorno_maximo, max(3, quantidade_pontos)
     )
     pontos: list[dict[str, object]] = []
     for alvo in alvos:
         try:
-            pesos = _otimizar_minima_variancia(medias, covariancia, float(alvo))
+            pesos = _otimizar_minima_variancia(
+                medias, covariancia, float(alvo), alocacao_minima
+            )
         except RuntimeError:
             continue
         pontos.append(
@@ -202,9 +221,11 @@ def calcular_fronteira_eficiente(
     retornos_fundos = pd.Series(medias, index=nomes)
 
     # Amostra reprodutível de outras alocações long-only para dar contexto
-    # visual à fronteira otimizada. Dirichlet garante pesos positivos somando 100%.
+    # visual à fronteira otimizada, respeitando o mesmo piso de alocação.
     gerador = np.random.default_rng(42)
-    pesos_testados = gerador.dirichlet(np.ones(len(nomes)), size=quantidade_simulacoes)
+    pesos_testados = alocacao_minima + (
+        1.0 - alocacao_minima * len(nomes)
+    ) * gerador.dirichlet(np.ones(len(nomes)), size=quantidade_simulacoes)
     retornos_testados = pesos_testados @ medias
     variancias_testadas = np.einsum(
         "ij,jk,ik->i", pesos_testados, covariancia, pesos_testados
