@@ -20,7 +20,16 @@ from analytics import (
     limites_do_banco,
     listar_fundos,
     performance_base_100,
+    retorno_acumulado_base_100,
     risco_retorno_carteira_estatica,
+)
+from benchmarks import (
+    BENCHMARK_NENHUM,
+    FONTES_BENCHMARK,
+    NOMES_SERIES,
+    OPCOES_BENCHMARK,
+    ErroBenchmark,
+    carregar_benchmark,
 )
 
 
@@ -85,6 +94,12 @@ st.markdown(
         padding: .9rem 1rem; border-left: 4px solid #f9a825;
         background: #34383a; border-radius: 8px; color: #d8d1b7;
     }
+    .fontes-rodape {
+        margin-top: 2.2rem; padding: 1rem 0 .25rem;
+        border-top: 1px solid #414850; color: #8f9a9e;
+        font-size: .82rem; line-height: 1.55;
+    }
+    .fontes-rodape strong { color: #aeb8bb; }
     div[data-testid="stMetric"] {
         background: linear-gradient(145deg, #343a41, #2d3339);
         border: 1px solid #454c54; padding: .85rem 1rem; border-radius: 12px;
@@ -122,6 +137,11 @@ def obter_cotas(
     )
 
 
+@st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
+def obter_benchmark(benchmark: str, inicio: date, fim: date) -> pd.Series:
+    return carregar_benchmark(benchmark, inicio, fim)
+
+
 def interpretar_data(texto: str, rotulo: str) -> date:
     try:
         return pd.to_datetime(texto, format="%d/%m/%Y", errors="raise").date()
@@ -133,7 +153,12 @@ def nome_curto(nome: str, limite: int = 62) -> str:
     return nome if len(nome) <= limite else nome[: limite - 1] + "…"
 
 
-def grafico_linhas(dados: pd.DataFrame, titulo: str, eixo_y: str) -> go.Figure:
+def grafico_linhas(
+    dados: pd.DataFrame,
+    titulo: str,
+    eixo_y: str,
+    series_tracejadas: set[str] | None = None,
+) -> go.Figure:
     longos = dados.rename_axis("Data").reset_index().melt(
         id_vars="Data", var_name="Série", value_name=eixo_y
     )
@@ -148,8 +173,32 @@ def grafico_linhas(dados: pd.DataFrame, titulo: str, eixo_y: str) -> go.Figure:
         title_font=dict(color=COR_TEXTO), legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
     figura.update_xaxes(showgrid=False, linecolor=COR_GRADE, zerolinecolor=COR_GRADE)
-    figura.update_yaxes(showgrid=True, gridcolor=COR_GRADE, zerolinecolor=COR_GRADE, ticksuffix="")
+    figura.update_yaxes(
+        showgrid=True, gridcolor=COR_GRADE, zerolinecolor=COR_GRADE,
+        tickformat=".1%",
+    )
+    for trace in figura.data:
+        trace.update(hovertemplate="%{fullData.name}: %{y:.2%}<extra></extra>")
+        if trace.name in (series_tracejadas or set()):
+            trace.update(line=dict(dash="dash", width=3))
     return figura
+
+
+def incluir_benchmark(
+    dados: pd.DataFrame, benchmark: str, inicio: date, fim: date
+) -> tuple[pd.DataFrame, set[str], str | None]:
+    """Anexa um benchmark apenas aos dados de exibição do gráfico."""
+    if benchmark == BENCHMARK_NENHUM:
+        return dados, set(), None
+    try:
+        serie = obter_benchmark(benchmark, inicio, fim)
+    except (ErroBenchmark, ValueError) as erro:
+        return dados, set(), str(erro)
+    nome = NOMES_SERIES[benchmark]
+    combinado = pd.concat(
+        [dados, serie.rename(nome)], axis="columns", sort=False
+    ).sort_index()
+    return combinado, {nome}, None
 
 
 def tabela_alocacao(pesos: pd.Series, nomes: dict[str, str]) -> pd.DataFrame:
@@ -186,6 +235,12 @@ with aba_fundos:
         format_func=lambda valor: rotulos[valor],
         placeholder="Digite parte do nome do fundo…",
         key="fundos_performance",
+    )
+    benchmark_fundos = st.selectbox(
+        "Benchmark para comparação",
+        options=OPCOES_BENCHMARK,
+        key="benchmark_fundos",
+        help="O benchmark é exibido como retorno acumulado e não altera os cálculos dos fundos.",
     )
     modo_periodo = st.radio(
         "Período considerado",
@@ -245,21 +300,41 @@ with aba_fundos:
         else:
             performance_cnpj = performance_base_100(cotas)
             performance = performance_cnpj.rename(columns=nomes_por_cnpj)
-            retornos_totais = performance.apply(lambda serie: serie.dropna().iloc[-1] / 100.0 - 1.0)
+            performance_exibida, benchmarks_tracejados, erro_benchmark = incluir_benchmark(
+                performance,
+                benchmark_fundos,
+                cotas.index.min().date(),
+                cotas.index.max().date(),
+            )
+            if erro_benchmark:
+                st.warning(
+                    "Não foi possível carregar o benchmark selecionado. "
+                    f"Os fundos continuam disponíveis. Detalhe: {erro_benchmark}"
+                )
+            retornos_totais = performance_exibida.apply(
+                lambda serie: serie.dropna().iloc[-1] / 100.0 - 1.0
+            )
             col1, col2, col3 = st.columns(3)
             primeiras_datas = [cotas[coluna].first_valid_index() for coluna in selecionados]
             col1.metric("Primeira data exibida", f"{min(primeiras_datas):%d/%m/%Y}")
             col2.metric("Fim efetivo", f"{cotas.index.max():%d/%m/%Y}")
             col3.metric("Fundos comparados", str(len(selecionados)))
+            retornos_grafico = retorno_acumulado_base_100(performance_exibida)
             st.plotly_chart(
-                grafico_linhas(performance, "Evolução de R$ 100", "Valor acumulado"),
+                grafico_linhas(
+                    retornos_grafico,
+                    "Rentabilidade acumulada",
+                    "Retorno acumulado",
+                    benchmarks_tracejados,
+                ),
                 width="stretch",
             )
             resumo = pd.DataFrame(
                 {
-                    "Fundo": retornos_totais.index,
+                    "Série": retornos_totais.index,
                     "Data inicial efetiva": [
-                        performance[coluna].first_valid_index() for coluna in retornos_totais.index
+                        performance_exibida[coluna].first_valid_index()
+                        for coluna in retornos_totais.index
                     ],
                     "Rentabilidade na janela": retornos_totais.values,
                 }
@@ -274,6 +349,12 @@ with aba_fundos:
 
 with aba_carteira:
     st.subheader("Monte sua carteira")
+    benchmark_carteira = st.selectbox(
+        "Benchmark para a performance da carteira",
+        options=OPCOES_BENCHMARK,
+        key="benchmark_carteira",
+        help="O benchmark aparece somente no gráfico de performance, nunca na fronteira eficiente.",
+    )
     carteira = selecionados
     if not carteira:
         st.info(
@@ -316,8 +397,27 @@ with aba_carteira:
                 col1.metric("Rentabilidade da carteira", f"{rentabilidade:.2%}")
                 col2.metric("Início efetivo", f"{historico.index.min():%d/%m/%Y}")
                 col3.metric("Fim efetivo", f"{historico.index.max():%d/%m/%Y}")
+                performance_carteira, benchmarks_tracejados, erro_benchmark = incluir_benchmark(
+                    historico.to_frame(),
+                    benchmark_carteira,
+                    historico.index.min().date(),
+                    historico.index.max().date(),
+                )
+                if erro_benchmark:
+                    st.warning(
+                        "Não foi possível carregar o benchmark selecionado. "
+                        f"A carteira continua disponível. Detalhe: {erro_benchmark}"
+                    )
+                retornos_carteira_grafico = retorno_acumulado_base_100(
+                    performance_carteira
+                )
                 st.plotly_chart(
-                    grafico_linhas(historico.to_frame(), "Evolução de R$ 100 na carteira", "Valor"),
+                    grafico_linhas(
+                        retornos_carteira_grafico,
+                        "Rentabilidade acumulada da carteira",
+                        "Retorno acumulado",
+                        benchmarks_tracejados,
+                    ),
                     width="stretch",
                 )
                 with st.expander("Alocação atual estimada após a variação dos fundos"):
@@ -452,3 +552,15 @@ with aba_carteira:
                             """,
                             unsafe_allow_html=True,
                         )
+
+st.markdown(
+    f"""
+    <div class="fontes-rodape">
+    <strong>Fontes de dados:</strong><br>
+    Fundos de investimento: Informe Diário — Portal de Dados Abertos CVM.<br>
+    {FONTES_BENCHMARK['CDI']}<br>
+    {FONTES_BENCHMARK['Ibovespa']}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)

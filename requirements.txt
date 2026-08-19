@@ -5,3 +5,5 @@ certifi>=2026.7.22
 streamlit>=1.61,<2
 plotly>=6.9,<7
 scipy>=1.18,<2
+python-bcb>=0.4,<1
+yfinance>=1.5,<2

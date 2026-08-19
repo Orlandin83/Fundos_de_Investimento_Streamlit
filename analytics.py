@@ -93,6 +93,13 @@ def performance_base_100(cotas: pd.DataFrame) -> pd.DataFrame:
     return resultado
 
 
+def retorno_acumulado_base_100(
+    valores: pd.DataFrame | pd.Series,
+) -> pd.DataFrame | pd.Series:
+    """Converte uma evolução base 100 em retorno acumulado decimal."""
+    return valores.divide(100.0).subtract(1.0)
+
+
 def historico_carteira_sem_rebalanceamento(
     cotas: pd.DataFrame, pesos: pd.Series
 ) -> tuple[pd.Series, pd.DataFrame]:
