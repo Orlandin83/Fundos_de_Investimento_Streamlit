@@ -97,10 +97,22 @@ def _ler_tabela_fundos_numbers(planilha: Path) -> pd.DataFrame:
     )
 
 
-def carregar_fundos(planilha: Path = PLANILHA) -> pd.DataFrame:
-    """Lê e valida a relação de fundos do arquivo Apple Numbers."""
+def carregar_fundos(
+    planilha: Path = PLANILHA, banco: Path = BANCO_PADRAO
+) -> pd.DataFrame:
+    """Lê a relação de fundos do Numbers ou, na ausência dele, do DuckDB."""
     if not planilha.exists():
-        raise FileNotFoundError(f"Planilha não encontrada: {planilha}")
+        if not banco.exists():
+            raise FileNotFoundError(
+                f"Planilha e banco de dados não encontrados: {planilha}; {banco}"
+            )
+        with duckdb.connect(str(banco), read_only=True) as conexao:
+            fundos = conexao.execute(
+                "SELECT cnpj, nome FROM fundos ORDER BY nome"
+            ).fetchdf()
+        if fundos.empty:
+            raise ValueError("O banco de dados não possui fundos cadastrados.")
+        return fundos
     fundos = _ler_tabela_fundos_numbers(planilha)
     ausentes = {"Nome", "CNPJ"} - set(fundos.columns)
     if ausentes:
