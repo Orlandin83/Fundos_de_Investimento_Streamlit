@@ -97,7 +97,7 @@ def consultar_cotas(cnpjs, inicio, fim) -> pd.DataFrame:
             SELECT data, cnpj, valor_cota FROM public.cotas_diarias
             WHERE cnpj = ANY(%s) AND data BETWEEN %s AND %s ORDER BY data, cnpj
         ''', [list(cnpjs), inicio, fim])
-    # Mantém o dtype que o DuckDB entregava ao pandas, inclusive em joins/gráficos.
+    # Usa resolução de microssegundos consistente nos joins e gráficos.
     dados['data'] = pd.to_datetime(dados['data']).astype('datetime64[us]')
     return dados
 
@@ -108,11 +108,11 @@ class ResultadoUpsert:
     atualizadas: int = 0
 
 
-def upsert_lote(conexao, tabela: str, registros, *, preservar_mais_recentes=False) -> ResultadoUpsert:
+def upsert_lote(conexao, tabela: str, registros) -> ResultadoUpsert:
     """COPY usa um fluxo em lote, sem INSERT/requisição individual por registro.
 
     O lock serializa escritores desta tabela e mantém as contagens exatas.
-    A transação externa pode abranger todos os lotes de um arquivo/migração.
+    A transação externa pode abranger todos os lotes de um arquivo.
     Duplicatas dentro do lote: prevalece a última ocorrência, como no coletor.
     """
     colunas, chaves = COLUNAS[tabela], CHAVES[tabela]
@@ -123,9 +123,6 @@ def upsert_lote(conexao, tabela: str, registros, *, preservar_mais_recentes=Fals
     comparaveis = [c for c in alteraveis if c != 'atualizado_em']
     igualdade = sql.SQL(' AND ').join(sql.SQL('t.{0} = s.{0}').format(sql.Identifier(c)) for c in chaves)
     diferencas = sql.SQL(' OR ').join(sql.SQL('t.{0} IS DISTINCT FROM EXCLUDED.{0}').format(sql.Identifier(c)) for c in comparaveis)
-    if preservar_mais_recentes:
-        data_coluna = sql.Identifier('processado_em' if tabela == 'cargas' else 'atualizado_em')
-        diferencas = sql.SQL('({}) AND (t.{c} IS NULL OR EXCLUDED.{c} >= t.{c})').format(diferencas, c=data_coluna)
     with conexao.transaction():
         conexao.execute(sql.SQL('LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE').format(nome))
         conexao.execute(sql.SQL('CREATE TEMP TABLE lote_importacao (LIKE {} INCLUDING DEFAULTS) ON COMMIT DROP').format(nome))

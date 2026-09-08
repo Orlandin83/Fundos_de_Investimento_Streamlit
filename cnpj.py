@@ -101,7 +101,7 @@ def carregar_fundos(planilha: Path = PLANILHA) -> pd.DataFrame:
     if not planilha.exists():
         fundos = listar_cadastro()
         if fundos.empty:
-            raise ValueError("O banco não possui fundos cadastrados. Execute a migração inicial.")
+            raise ValueError("O banco não possui fundos cadastrados. Cadastre os fundos antes de executar o coletor.")
         return fundos
     fundos = _ler_tabela_fundos_numbers(planilha)
     ausentes = {"Nome", "CNPJ"} - set(fundos.columns)

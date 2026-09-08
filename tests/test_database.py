@@ -4,7 +4,6 @@ O nome do banco deve começar com fundos_test. Nunca usa DATABASE_URL de produç
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
-import importlib.util
 import os
 from pathlib import Path
 import tempfile
@@ -150,27 +149,3 @@ class PostgreSQLTest(unittest.TestCase):
         aplicar_schema()
         self.assertEqual(self.conexao.execute('SELECT count(*) FROM public.cotas_diarias').fetchone()[0], 1)
         self.assertTrue(self.conexao.execute("SELECT bool_and(relrowsecurity) FROM pg_class WHERE oid IN ('public.fundos'::regclass, 'public.cotas_diarias'::regclass, 'public.cargas'::regclass, 'public.simulacoes'::regclass)").fetchone()[0])
-
-    @unittest.skipUnless(importlib.util.find_spec('duckdb'), 'Instale requirements-migration.txt')
-    def test_migracao_reexecutavel_e_divergencia_rollback(self):
-        import duckdb
-        from scripts.migrate_duckdb_to_supabase import migrar, validar
-        self.conexao.execute('TRUNCATE public.fundos')
-        with tempfile.TemporaryDirectory() as pasta:
-            with duckdb.connect(str(Path(pasta) / 'origem.duckdb')) as origem:
-                origem.execute('CREATE TABLE fundos (cnpj VARCHAR PRIMARY KEY, nome VARCHAR, atualizado_em TIMESTAMPTZ)')
-                origem.execute('CREATE TABLE cotas_diarias (cnpj VARCHAR, id_subclasse VARCHAR, data DATE, valor_cota DOUBLE, arquivo_origem VARCHAR, atualizado_em TIMESTAMPTZ, PRIMARY KEY(cnpj,id_subclasse,data))')
-                origem.execute('CREATE TABLE cargas (arquivo VARCHAR PRIMARY KEY, url VARCHAR, periodo_inicial VARCHAR, periodo_final VARCHAR, processado_em TIMESTAMPTZ, linhas_inseridas BIGINT, status VARCHAR, erro VARCHAR)')
-                origem.execute('INSERT INTO fundos VALUES (?, ?, ?)', [self.cnpj, 'Fundo teste', self.agora])
-                origem.executemany('INSERT INTO cotas_diarias VALUES (?, ?, ?, ?, ?, ?)', [self.registro(dia=i) for i in range(1, 5)])
-                migrar(origem, self.conexao, 2)
-                migrar(origem, self.conexao, 2)
-                with self.conexao.transaction():
-                    self.assertEqual(validar(origem, self.conexao)['cotas_diarias'], 4)
-                # Destino com histórico adicional não deve ser apagado para forçar paridade.
-                upsert_lote(self.conexao, 'cotas_diarias', [self.registro(dia=5)])
-                origem.execute("UPDATE fundos SET nome='Alterado', atualizado_em=now()")
-                with self.assertRaises(ValueError):
-                    migrar(origem, self.conexao, 2)
-                self.assertEqual(self.conexao.execute('SELECT nome FROM public.fundos').fetchone()[0], 'Fundo teste')
-                self.assertEqual(self.conexao.execute('SELECT count(*) FROM public.cotas_diarias').fetchone()[0], 5)

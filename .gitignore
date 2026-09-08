@@ -46,7 +46,7 @@ tmp/
 dados/cache_cvm/
 *.zip
 
-# Bancos locais: somente backup/migração, nunca novas versões no Git.
+# Impedir o versionamento de bancos locais.
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp

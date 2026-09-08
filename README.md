@@ -35,12 +35,11 @@ Todas as colunas das três primeiras tabelas são NOT NULL, exceto
 `cargas.processado_em`, `cargas.linhas_inseridas` e `cargas.erro`.
 Índices adicionais: `(cnpj, data) INCLUDE (valor_cota)`, `(data)` e
 `simulacoes(criado_em)`. As PKs já impõem unicidade; não há UNIQUE redundante.
-Não foi adicionada FK, preservando o esquema de origem e evitando rejeitar
-eventuais históricos sem cadastro durante a migração.
+O histórico não tem FK para o cadastro; a chave primária impede duplicação de cotas.
 
-`DOUBLE PRECISION` preserva o DOUBLE de 64 bits da origem e os cálculos NumPy.
-Não recupera casas decimais já arredondadas pelo coletor original. Patrimônio,
-captação, resgate e cotistas não eram armazenados e não são introduzidos aqui.
+`DOUBLE PRECISION` armazena cotas em ponto flutuante de 64 bits, compatível com
+os cálculos NumPy. Patrimônio, captação, resgate e quantidade de cotistas não
+fazem parte da base.
 Retornos continuam sendo calculados em memória.
 
 ## Configuração inicial no Supabase
@@ -62,7 +61,7 @@ Não são necessários `SUPABASE_URL`, `SUPABASE_KEY` ou Service Role Key.
 Não coloque credenciais no frontend, nas mensagens de erro ou no repositório.
 RLS fica habilitada, sem acesso público para `anon`/`authenticated`, e a view
 usa `security_invoker`. As credenciais administrativas devem ficar restritas
-à instalação/migração.
+à instalação da estrutura.
 
 Para separar permissões de operação, execute também
 [supabase/backend_roles.sql](supabase/backend_roles.sql) como administrador.
@@ -81,39 +80,20 @@ Referências: [conexões Supabase](https://supabase.com/docs/guides/database/con
 [COPY no Psycopg](https://www.psycopg.org/psycopg3/docs/basic/copy.html),
 [secrets Streamlit](https://docs.streamlit.io/develop/concepts/connections/secrets-management).
 
-## Migração inicial
+## Preparar um banco vazio
 
-Mantenha o coletor antigo e o novo pausados enquanto migra e valida. Preserve o
-DuckDB como backup. Não remova o arquivo nem publique a troca do app antes de
-configurar o destino e concluir a comparação.
+O projeto em uso já possui os dados no Supabase. Para configurar outra instalação:
 
 ```bash
-python -m pip install -r requirements-migration.txt
-python scripts/migrate_duckdb_to_supabase.py --aplicar-schema
-python scripts/migrate_duckdb_to_supabase.py --validar-apenas
+python -m pip install -r requirements.txt
+python database.py --aplicar-schema
 ```
 
-Por padrão a origem é `dados/fundos.duckdb`, aberta **somente para leitura**.
-Opções: `--origem CAMINHO`, `--tamanho-lote 25000`. Também é possível aplicar o
-schema separadamente com `python database.py --aplicar-schema`.
-
-A migração copia `fundos`, `cotas_diarias` e `cargas` em uma única transação,
-com lotes, progresso e contagem de inseridas/atualizadas. Mantém timestamps e
-não sobrescreve dados mais recentes no destino. Pode ser repetida sem duplicar
-registros. Uma divergência na validação antes do COMMIT desfaz toda a carga;
-o schema previamente aplicado permanece, assim como os dados anteriores.
-O contador existente não é alterado pela migração.
-
-A validação compara todas as chaves e valores de cotas, não apenas uma amostra;
-também compara contagens das três tabelas, cobertura por CNPJ e retornos diários
-e base 100 de cinco fundos escolhidos com semente fixa. Timestamps operacionais
-e a nova coluna `linhas_atualizadas` não participam da comparação financeira.
-O relatório deve terminar com `COMMIT concluído` e código de saída zero.
-
-Depois que o coletor atualizar o PostgreSQL com dados novos, uma comparação
-estrita com o DuckDB antigo naturalmente poderá divergir. Não apague os dados
-novos para forçar a igualdade e não repita a carga inicial como atualização
-diária. Guarde o relatório de paridade realizado antes de ativar as cargas.
+Cadastre os fundos na tabela `fundos` (CNPJ, nome e `atualizado_em`) ou forneça
+localmente o arquivo `Fundos CAIXA.numbers` com as colunas Nome e CNPJ.
+Execute `python cnpj.py --meses-reprocessar 2` para carregar o histórico da CVM.
+A primeira coleta percorre os arquivos disponíveis e pode demorar.
+Não há armazenamento persistente de cotas em arquivos locais.
 
 ## Executar e validar o Streamlit
 
@@ -169,7 +149,7 @@ python cnpj.py --meses-reprocessar 2
 ```
 
 O universo vem do Numbers local quando disponível ou de `fundos` no PostgreSQL
-(GitHub/Streamlit não precisam do Numbers). O cadastro precisa ter sido migrado
+(GitHub/Streamlit não precisam do Numbers). O cadastro precisa estar preenchido
 antes de iniciar a automação. Os três FIIs excluídos continuam fora das análises
 e das novas coletas, mas seus registros existentes não são apagados.
 
@@ -183,7 +163,7 @@ Cada arquivo é transmitido para staging, deduplicado pela chave completa e
 mesclado atomicamente. Registros ausentes em uma republicação permanecem no
 histórico. Cotas sem mudança não têm o timestamp alterado; o registro de carga
 é atualizado para auditar cada execução, com quantidades efetivas de inserções
-e correções (na carga antiga o campo contava linhas processadas).
+e correções.
 Falhas desfazem o arquivo inteiro, preservando arquivos já concluídos.
 Uma conexão perdida encerra com erro; uma nova execução retoma pelos controles.
 
@@ -192,7 +172,7 @@ DATABASE_URL** com a conexão do coletor. Não use Repository Variables para sen
 O workflow `Atualizar base de fundos` usa apenas `contents: read`, executa testes
 e grava diretamente no PostgreSQL. Não há `git add`, commit ou push de banco.
 
-Depois da migração validada, execute **Run workflow** e confira:
+Com a conexão configurada, execute **Run workflow** e confira:
 
 1. conclusão sem erro e logs com inseridas/atualizadas por arquivo;
 2. `cargas.status = 'OK'` e `processado_em` recente;
@@ -218,34 +198,16 @@ python -m unittest discover -s tests -v
 Sem `TEST_DATABASE_URL`, testes de integração ficam explicitamente ignorados;
 os testes de cálculos e identidade do contador continuam executando. Para a
 suíte completa, configure `TEST_DATABASE_URL` para PostgreSQL **local,
-descartável**, com nome `fundos_test*`, e instale `requirements-migration.txt`.
+descartável**, com nome `fundos_test*`, e instale `requirements.txt`.
 Exporte a variável no shell para os testes; eles não leem essa variável de `.env`.
 Os testes truncam somente esse banco de teste e rejeitam hosts remotos ou nomes
 fora do padrão. Nunca aponte esse parâmetro para dados de produção.
 
 O workflow `Testes PostgreSQL` cria um serviço PostgreSQL efêmero no runner e
-executa a suíte completa, incluindo migração repetida, precisão, rollback,
+executa a suíte completa, incluindo idempotência, precisão, rollback,
 correções, consultas filtradas, RLS e concorrência do contador. Esse serviço
 também não cria outro projeto Supabase e não precisa de Secrets de produção.
 
-## Retirada posterior do DuckDB
-
-`dados/fundos.duckdb` foi preservado e **ainda está rastreado pelo Git**. Remover
-a exceção do `.gitignore` não retira um arquivo já versionado.
-Somente após validar Supabase, Streamlit e workflow, execute:
-
-```bash
-git rm --cached dados/fundos.duckdb
-```
-
-Isso retira o arquivo do índice e preserva a cópia local. Faça o commit dessa
-remoção junto à conclusão do corte. Não foi reescrito o histórico Git: versões
-antigas continuam nos commits anteriores. Mantenha backup fora do repositório.
-Arquivos auxiliares `*.duckdb.wal`/`*.duckdb.tmp` só podem ser descartados quando
-o banco estiver fechado e o backup confirmado. O cache `dados/cache_cvm/` é
-recriável e já permanece ignorado.
-
-Referências intencionais restantes: script de migração, testes de migração,
-`requirements-migration.txt`, `.gitignore` e esta documentação. A produção não
-importa DuckDB. Quando não for mais necessário migrar/validar backups, o script
-e a dependência exclusiva poderão ser arquivados; não remova o backup agora.
+A pasta `dados/` é usada apenas para o cache temporário `dados/cache_cvm/`.
+O coletor a recria quando necessário; os ZIPs são apagados após a carga, exceto
+quando `--manter-cache` é informado.

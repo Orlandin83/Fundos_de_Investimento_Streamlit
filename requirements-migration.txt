@@ -1,2 +1,0 @@
--r requirements.txt
-duckdb>=1.5,<2
