@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+from database import ErroBanco, total_simulacoes
+from simulation_counter import contar_analise
 
 from analytics import (
     ALOCACAO_MINIMA_FRONTEIRA,
@@ -33,8 +35,6 @@ from benchmarks import (
 )
 
 
-BASE_DIR = Path(__file__).resolve().parent
-BANCO = BASE_DIR / "dados" / "fundos.duckdb"
 CORES = ["#66C3BC", "#A9D8D3", "#4A9F9A", "#D5DDDE", "#718A91", "#3A7D7A"]
 COR_PAINEL = "#30363D"
 COR_GRADE = "#444B53"
@@ -46,6 +46,13 @@ st.set_page_config(
     page_icon="📈",
     layout="wide",
 )
+
+# O Streamlit exporta secrets de nível raiz para o ambiente ao carregá-los.
+# database.py continua lendo exclusivamente DATABASE_URL via os.environ.
+try:
+    st.secrets.get("DATABASE_URL")
+except FileNotFoundError:
+    pass
 
 st.markdown(
     """
@@ -123,18 +130,22 @@ st.markdown(
 )
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=300, max_entries=128, show_spinner=False)
 def obter_fundos() -> pd.DataFrame:
-    return listar_fundos(BANCO)
+    return listar_fundos()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(ttl=300, max_entries=128, show_spinner=False)
 def obter_cotas(
     cnpjs: tuple[str, ...], inicio: date, fim: date, datas_comuns: bool
 ) -> pd.DataFrame:
-    return carregar_cotas(
-        BANCO, cnpjs, pd.Timestamp(inicio), pd.Timestamp(fim), datas_comuns=datas_comuns
-    )
+    try:
+        return carregar_cotas(
+            cnpjs, pd.Timestamp(inicio), pd.Timestamp(fim), datas_comuns=datas_comuns
+        )
+    except (ErroBanco, ValueError) as erro:
+        st.error(str(erro))
+        st.stop()
 
 
 @st.cache_data(ttl=6 * 60 * 60, show_spinner=False)
@@ -213,12 +224,22 @@ def tabela_alocacao(pesos: pd.Series, nomes: dict[str, str]) -> pd.DataFrame:
     )
 
 
-if not BANCO.exists():
-    st.error("Banco de dados não encontrado. Execute primeiro o coletor cnpj.py.")
-    st.stop()
+@st.cache_data(ttl=300, show_spinner=False)
+def obter_limites():
+    return limites_do_banco()
 
-fundos = obter_fundos()
-inicio_banco, fim_banco = limites_do_banco(BANCO)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def obter_total_simulacoes():
+    return total_simulacoes()
+
+
+try:
+    fundos = obter_fundos()
+    inicio_banco, fim_banco = obter_limites()
+except (ErroBanco, ValueError) as erro:
+    st.error(str(erro))
+    st.stop()
 nomes_por_cnpj = dict(zip(fundos["cnpj"], fundos["nome"]))
 rotulos = {
     linha.cnpj: f"{linha.nome}  ·  {linha.cnpj}"
@@ -446,6 +467,11 @@ with aba_carteira:
                     except (ValueError, RuntimeError) as erro:
                         st.warning(str(erro))
                     else:
+                        try:
+                            if contar_analise(cotas_carteira, pesos, st.session_state):
+                                obter_total_simulacoes.clear()
+                        except ErroBanco:
+                            st.caption("Contador temporariamente indisponível; a análise foi concluída.")
                         figura = go.Figure()
                         figura.add_trace(go.Scattergl(
                             x=fronteira.carteiras_testadas["risco"],
@@ -564,3 +590,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+try:
+    st.caption(f"Simulações de carteira concluídas no site: {obter_total_simulacoes():,}".replace(",", "."))
+except ErroBanco:
+    st.caption("Contador de simulações temporariamente indisponível.")

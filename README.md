@@ -1,0 +1,251 @@
+# Fundos de investimento CAIXA
+
+Streamlit para comparar cotas, carteiras e fronteira eficiente. O backend usa
+PostgreSQL fornecido pelo **mesmo projeto Supabase**, incluindo o contador de
+simulações. Não é necessário criar outro banco/projeto para o contador.
+
+## Arquitetura
+
+```text
+CVM → ZIP/CSV → pandas em lotes → COPY/staging → UPSERT PostgreSQL
+Streamlit → database.py → cotas dos CNPJs/período selecionados → pandas → cálculos
+Streamlit → UUID da análise concluída → simulacoes (no mesmo PostgreSQL)
+GitHub Actions → cnpj.py → PostgreSQL (sem commit/push de dados)
+```
+
+`analytics.py` preserva as fórmulas financeiras e a otimização existentes.
+`database.py` concentra conexões, SQL, consultas, cadastro, cargas e contador.
+Usa `psycopg` e o protocolo PostgreSQL, sem API REST ou `supabase-py`.
+O `COPY` transmite registros em fluxo: não são feitos INSERTs individuais.
+
+## Tabelas e precisão
+
+O arquivo [supabase/schema.sql](supabase/schema.sql) cria a estrutura de forma
+idempotente, sem remover dados:
+
+| Objeto | Campos e tipos PostgreSQL | Chave |
+|---|---|---|
+| `fundos` | `cnpj TEXT`, `nome TEXT`, `atualizado_em TIMESTAMPTZ` | `cnpj` |
+| `cotas_diarias` | `cnpj TEXT`, `id_subclasse TEXT DEFAULT ''`, `data DATE`, `valor_cota DOUBLE PRECISION`, `arquivo_origem TEXT`, `atualizado_em TIMESTAMPTZ` | `(cnpj, id_subclasse, data)` |
+| `cargas` | `arquivo TEXT`, `url TEXT`, `periodo_inicial TEXT`, `periodo_final TEXT`, `processado_em TIMESTAMPTZ`, `linhas_inseridas BIGINT`, `status TEXT`, `erro TEXT`, `linhas_atualizadas BIGINT DEFAULT 0` | `arquivo` |
+| `simulacoes` | `id UUID`, `criado_em TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP` | `id` |
+| `fundos_controle` | View: `cnpj`, `nome`, `primeira_data_disponivel`, `ultima_data_disponivel`, `quantidade_registros`, `status` | — |
+
+Todas as colunas das três primeiras tabelas são NOT NULL, exceto
+`cargas.processado_em`, `cargas.linhas_inseridas` e `cargas.erro`.
+Índices adicionais: `(cnpj, data) INCLUDE (valor_cota)`, `(data)` e
+`simulacoes(criado_em)`. As PKs já impõem unicidade; não há UNIQUE redundante.
+Não foi adicionada FK, preservando o esquema de origem e evitando rejeitar
+eventuais históricos sem cadastro durante a migração.
+
+`DOUBLE PRECISION` preserva o DOUBLE de 64 bits da origem e os cálculos NumPy.
+Não recupera casas decimais já arredondadas pelo coletor original. Patrimônio,
+captação, resgate e cotistas não eram armazenados e não são introduzidos aqui.
+Retornos continuam sendo calculados em memória.
+
+## Configuração inicial no Supabase
+
+1. Abra **Connect** no projeto existente. Use conexão PostgreSQL direta ou
+   **Session pooler** (útil quando o ambiente não tem IPv6). Prefira Session
+   pooler para este fluxo com tabelas temporárias, COPY e transações longas.
+2. Guarde a connection string em `DATABASE_URL` no ambiente do backend ou em
+   `.env` local. O arquivo `.env.example` lista apenas os nomes das variáveis.
+   `.env` é carregado sem sobrescrever variáveis já configuradas e é ignorado
+   pelo Git. Codifique caracteres especiais da senha na URL.
+3. Use TLS (`sslmode=require`, ou `verify-full` com certificado configurado).
+   O código exige ao menos TLS para conexões remotas.
+4. Aplique o schema como administrador/proprietário. A aplicação e o coletor
+   não criam tabelas automaticamente. Confira espaço disponível e limites de
+   conexões do **projeto existente** no painel antes da carga.
+
+Não são necessários `SUPABASE_URL`, `SUPABASE_KEY` ou Service Role Key.
+Não coloque credenciais no frontend, nas mensagens de erro ou no repositório.
+RLS fica habilitada, sem acesso público para `anon`/`authenticated`, e a view
+usa `security_invoker`. As credenciais administrativas devem ficar restritas
+à instalação/migração.
+
+Para separar permissões de operação, execute também
+[supabase/backend_roles.sql](supabase/backend_roles.sql) como administrador.
+Ele cria grupos **sem login e sem senha**:
+
+- `fundos_app`: consulta cadastro/cotas e lê/insere eventos do contador;
+- `fundos_coletor`: consulta, insere e atualiza cadastro/cotas/cargas, sem DELETE.
+
+Crie usuários PostgreSQL de backend com senha fora do código, conceda o grupo
+correspondente (`GRANT fundos_app TO seu_usuario_app`, por exemplo) e use
+connection strings diferentes em cada ambiente, ambas chamadas `DATABASE_URL`.
+Confirme que os usuários herdam os grupos. O arquivo de grupos inclui grants e
+políticas RLS; não concede acesso à API pública.
+
+Referências: [conexões Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres),
+[COPY no Psycopg](https://www.psycopg.org/psycopg3/docs/basic/copy.html),
+[secrets Streamlit](https://docs.streamlit.io/develop/concepts/connections/secrets-management).
+
+## Migração inicial
+
+Mantenha o coletor antigo e o novo pausados enquanto migra e valida. Preserve o
+DuckDB como backup. Não remova o arquivo nem publique a troca do app antes de
+configurar o destino e concluir a comparação.
+
+```bash
+python -m pip install -r requirements-migration.txt
+python scripts/migrate_duckdb_to_supabase.py --aplicar-schema
+python scripts/migrate_duckdb_to_supabase.py --validar-apenas
+```
+
+Por padrão a origem é `dados/fundos.duckdb`, aberta **somente para leitura**.
+Opções: `--origem CAMINHO`, `--tamanho-lote 25000`. Também é possível aplicar o
+schema separadamente com `python database.py --aplicar-schema`.
+
+A migração copia `fundos`, `cotas_diarias` e `cargas` em uma única transação,
+com lotes, progresso e contagem de inseridas/atualizadas. Mantém timestamps e
+não sobrescreve dados mais recentes no destino. Pode ser repetida sem duplicar
+registros. Uma divergência na validação antes do COMMIT desfaz toda a carga;
+o schema previamente aplicado permanece, assim como os dados anteriores.
+O contador existente não é alterado pela migração.
+
+A validação compara todas as chaves e valores de cotas, não apenas uma amostra;
+também compara contagens das três tabelas, cobertura por CNPJ e retornos diários
+e base 100 de cinco fundos escolhidos com semente fixa. Timestamps operacionais
+e a nova coluna `linhas_atualizadas` não participam da comparação financeira.
+O relatório deve terminar com `COMMIT concluído` e código de saída zero.
+
+Depois que o coletor atualizar o PostgreSQL com dados novos, uma comparação
+estrita com o DuckDB antigo naturalmente poderá divergir. Não apague os dados
+novos para forçar a igualdade e não repita a carga inicial como atualização
+diária. Guarde o relatório de paridade realizado antes de ativar as cargas.
+
+## Executar e validar o Streamlit
+
+```bash
+python -m pip install -r requirements.txt
+python database.py
+streamlit run app.py
+```
+
+`python database.py` verifica a conexão PostgreSQL e apresenta contagens/datas,
+sem mostrar credenciais. Não há fallback para banco local na aplicação.
+No Streamlit Cloud, configure `DATABASE_URL` como secret de **nível raiz**:
+o Streamlit o disponibiliza como variável de ambiente no backend. Reinicie o
+app depois de trocar credenciais/destino, para descartar caches anteriores.
+
+Selecione fundos e período conhecidos, confira as datas e retornos e execute
+uma carteira com pelo menos dois fundos e 60 retornos comuns. O contador no
+rodapé deve aumentar uma vez após o cálculo bem-sucedido. Alterar apenas um
+benchmark ou reexecutar a tela com os mesmos dados/pesos não deve aumentar o
+contador na mesma sessão.
+
+As consultas históricas filtram CNPJ e intervalo e retornam somente `data`,
+`cnpj`, `valor_cota`. O cadastro é agregado no servidor. Caches de cadastro,
+limites e cotas expiram em cinco minutos; o de cotas tem limite de 128 entradas.
+O contador tem cache de 60 segundos, invalidado após um novo evento. Dados
+novos aparecem na próxima interação após o TTL; uma tela inativa não se atualiza
+sozinha. O cache de benchmarks existente continua com seis horas.
+
+Se surgirem subclasses simultâneas para um CNPJ/data, o app informa a
+ambiguidade. Não soma, calcula média ou escolhe uma subclasse silenciosamente.
+
+## Contador no mesmo banco
+
+Cada linha de `simulacoes` representa uma análise de carteira/fronteira
+concluída; as 3.000 diversificações internas do cálculo **não** são 3.000 eventos.
+Não se conta uma tentativa que falhou ou que não possui dados suficientes.
+O contador começa em zero; não há histórico anterior de uso para importar.
+
+O identificador UUID é estável por dados e pesos dentro da sessão Streamlit.
+A escrita usa `ON CONFLICT DO NOTHING`, inclusive em caso de perda da resposta
+após COMMIT. Uma sessão nova conta novamente; não é um contador de pessoas
+únicas nem um mecanismo antifraude. Dados corrigidos/pesos diferentes geram
+nova análise. A tabela guarda somente UUID e timestamp, sem dados pessoais.
+Ela compartilha armazenamento com as cotas e cresce com o uso; acompanhe o
+consumo no painel. Uma indisponibilidade do contador não impede os resultados.
+Se a sessão terminar antes de uma tentativa de gravação bem-sucedida, esse
+evento poderá não ser contabilizado.
+
+## Atualização CVM e GitHub Actions
+
+```bash
+python cnpj.py --meses-reprocessar 2
+```
+
+O universo vem do Numbers local quando disponível ou de `fundos` no PostgreSQL
+(GitHub/Streamlit não precisam do Numbers). O cadastro precisa ter sido migrado
+antes de iniciar a automação. Os três FIIs excluídos continuam fora das análises
+e das novas coletas, mas seus registros existentes não são apagados.
+
+O coletor reprocessa os dois arquivos mensais mais recentes, processa pendentes
+e usa `cargas` para retomar. Correções antigas exigem reprocessamento explícito:
+`python cnpj.py --inicio 2025-01 --fim 2025-02 --forcar`.
+Se usar `--manter-cache`, remova o ZIP correspondente ou use a janela recente
+para garantir um novo download de uma correção antiga.
+
+Cada arquivo é transmitido para staging, deduplicado pela chave completa e
+mesclado atomicamente. Registros ausentes em uma republicação permanecem no
+histórico. Cotas sem mudança não têm o timestamp alterado; o registro de carga
+é atualizado para auditar cada execução, com quantidades efetivas de inserções
+e correções (na carga antiga o campo contava linhas processadas).
+Falhas desfazem o arquivo inteiro, preservando arquivos já concluídos.
+Uma conexão perdida encerra com erro; uma nova execução retoma pelos controles.
+
+No GitHub, configure **Settings → Secrets and variables → Actions → Secrets →
+DATABASE_URL** com a conexão do coletor. Não use Repository Variables para senha.
+O workflow `Atualizar base de fundos` usa apenas `contents: read`, executa testes
+e grava diretamente no PostgreSQL. Não há `git add`, commit ou push de banco.
+
+Depois da migração validada, execute **Run workflow** e confira:
+
+1. conclusão sem erro e logs com inseridas/atualizadas por arquivo;
+2. `cargas.status = 'OK'` e `processado_em` recente;
+3. novas datas/correções no Streamlit depois do TTL;
+4. ausência de commit automático no repositório.
+
+Execute novamente para verificar ausência de novas inserções para a mesma
+publicação CVM. O arquivo pode ter correções legítimas entre duas execuções.
+
+```sql
+SELECT arquivo, status, processado_em, linhas_inseridas, linhas_atualizadas
+FROM public.cargas ORDER BY processado_em DESC LIMIT 10;
+SELECT COUNT(*), MIN(data), MAX(data) FROM public.cotas_diarias;
+SELECT COUNT(*) FROM public.simulacoes;
+```
+
+## Testes locais e CI
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Sem `TEST_DATABASE_URL`, testes de integração ficam explicitamente ignorados;
+os testes de cálculos e identidade do contador continuam executando. Para a
+suíte completa, configure `TEST_DATABASE_URL` para PostgreSQL **local,
+descartável**, com nome `fundos_test*`, e instale `requirements-migration.txt`.
+Exporte a variável no shell para os testes; eles não leem essa variável de `.env`.
+Os testes truncam somente esse banco de teste e rejeitam hosts remotos ou nomes
+fora do padrão. Nunca aponte esse parâmetro para dados de produção.
+
+O workflow `Testes PostgreSQL` cria um serviço PostgreSQL efêmero no runner e
+executa a suíte completa, incluindo migração repetida, precisão, rollback,
+correções, consultas filtradas, RLS e concorrência do contador. Esse serviço
+também não cria outro projeto Supabase e não precisa de Secrets de produção.
+
+## Retirada posterior do DuckDB
+
+`dados/fundos.duckdb` foi preservado e **ainda está rastreado pelo Git**. Remover
+a exceção do `.gitignore` não retira um arquivo já versionado.
+Somente após validar Supabase, Streamlit e workflow, execute:
+
+```bash
+git rm --cached dados/fundos.duckdb
+```
+
+Isso retira o arquivo do índice e preserva a cópia local. Faça o commit dessa
+remoção junto à conclusão do corte. Não foi reescrito o histórico Git: versões
+antigas continuam nos commits anteriores. Mantenha backup fora do repositório.
+Arquivos auxiliares `*.duckdb.wal`/`*.duckdb.tmp` só podem ser descartados quando
+o banco estiver fechado e o backup confirmado. O cache `dados/cache_cvm/` é
+recriável e já permanece ignorado.
+
+Referências intencionais restantes: script de migração, testes de migração,
+`requirements-migration.txt`, `.gitignore` e esta documentação. A produção não
+importa DuckDB. Quando não for mais necessário migrar/validar backups, o script
+e a dependência exclusiva poderão ser arquivados; não remova o backup agora.

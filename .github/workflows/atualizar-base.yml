@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: atualizacao-base-fundos
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   atualizar:
-    name: Coletar cotas e publicar banco
+    name: Atualizar cotas no PostgreSQL
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -29,25 +29,18 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      - name: Verificar configuração
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python -c "import os; assert os.environ.get('DATABASE_URL'), 'Configure o Secret DATABASE_URL'"
+
       - name: Instalar dependencias
         run: python -m pip install -r requirements.txt
-
-      - name: Atualizar a base da CVM
-        run: python cnpj.py --meses-reprocessar 2
 
       - name: Executar os testes
         run: python -m unittest discover -s tests -v
 
-      - name: Publicar a base atualizada
-        shell: bash
-        run: |
-          if git diff --quiet -- dados/fundos.duckdb; then
-            echo "A base nao sofreu alteracoes. Nenhum commit sera criado."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dados/fundos.duckdb
-          git commit -m "Atualizacao automatica da base de fundos"
-          git push
+      - name: Atualizar a base da CVM
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python cnpj.py --meses-reprocessar 2

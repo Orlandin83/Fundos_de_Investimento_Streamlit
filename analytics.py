@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
-import duckdb
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
+
+from database import consultar_cotas, limites_do_banco, listar_fundos
 
 
 DIAS_UTEIS_ANO = 252
@@ -30,31 +30,7 @@ class ResultadoFronteira:
     riscos_anuais_fundos: pd.Series
 
 
-def listar_fundos(banco: Path) -> pd.DataFrame:
-    """Retorna o universo de fundos e sua cobertura no banco."""
-    with duckdb.connect(str(banco), read_only=True) as conexao:
-        return conexao.execute(
-            """
-            SELECT cnpj, nome, primeira_data_disponivel, ultima_data_disponivel,
-                   quantidade_registros, status
-            FROM fundos_controle
-            ORDER BY nome
-            """
-        ).fetchdf()
-
-
-def limites_do_banco(banco: Path) -> tuple[pd.Timestamp, pd.Timestamp]:
-    with duckdb.connect(str(banco), read_only=True) as conexao:
-        inicio, fim = conexao.execute(
-            "SELECT MIN(data), MAX(data) FROM cotas_diarias"
-        ).fetchone()
-    if inicio is None or fim is None:
-        raise ValueError("O banco ainda não possui cotas diárias.")
-    return pd.Timestamp(inicio), pd.Timestamp(fim)
-
-
 def carregar_cotas(
-    banco: Path,
     cnpjs: list[str] | tuple[str, ...],
     inicio: pd.Timestamp,
     fim: pd.Timestamp,
@@ -63,19 +39,11 @@ def carregar_cotas(
     """Carrega cotas; opcionalmente mantém somente datas comuns aos fundos."""
     if not cnpjs:
         return pd.DataFrame()
-    with duckdb.connect(str(banco), read_only=True) as conexao:
-        dados = conexao.execute(
-            """
-            SELECT data, cnpj, valor_cota
-            FROM cotas_diarias
-            WHERE cnpj IN (SELECT UNNEST(?::VARCHAR[]))
-              AND data BETWEEN ? AND ?
-            ORDER BY data, cnpj
-            """,
-            [list(cnpjs), inicio.date(), fim.date()],
-        ).fetchdf()
+    dados = consultar_cotas(cnpjs, inicio.date(), fim.date())
     if dados.empty:
         return pd.DataFrame()
+    if dados.duplicated(['data', 'cnpj']).any():
+        raise ValueError('Existem subclasses simultâneas para um fundo nesta janela. Selecione outro período; a série não será agregada automaticamente.')
     cotas = dados.pivot(index="data", columns="cnpj", values="valor_cota").sort_index()
     cotas.index = pd.to_datetime(cotas.index)
     cotas = cotas.reindex(columns=list(cnpjs))

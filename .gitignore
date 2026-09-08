@@ -46,13 +46,11 @@ tmp/
 dados/cache_cvm/
 *.zip
 
-# DuckDB: ignorar bancos auxiliares e arquivos de trabalho.
+# Bancos locais: somente backup/migração, nunca novas versões no Git.
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
 
-# O banco filtrado abaixo é necessário para executar o app no Streamlit.
-!dados/fundos.duckdb
 
 # Artefatos de testes e saída
 outputs/

@@ -1,5 +1,6 @@
 pandas>=3.0,<4
-duckdb>=1.5,<2
+psycopg[binary]>=3.2,<4
+python-dotenv>=1,<2
 numbers-parser>=4.19,<5
 certifi>=2026.7.22
 streamlit>=1.61,<2

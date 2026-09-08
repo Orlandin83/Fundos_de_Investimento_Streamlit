@@ -26,25 +26,24 @@ from typing import Iterator
 from urllib.parse import urljoin
 
 import certifi
-import duckdb
+import numpy as np
 import pandas as pd
 from numbers_parser import Document
+
+from database import (
+    CNPJS_EXCLUIDOS, ErroBanco, ResultadoUpsert, arquivos_concluidos,
+    conectar_banco, listar_cadastro, registrar_carga, resumo_cargas,
+    sincronizar_fundos, upsert_lote,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
 PLANILHA = BASE_DIR / "Fundos CAIXA.numbers"
-BANCO_PADRAO = BASE_DIR / "dados" / "fundos.duckdb"
 CACHE_PADRAO = BASE_DIR / "dados" / "cache_cvm"
 
 URL_MENSAL = "https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/"
 URL_HISTORICO = urljoin(URL_MENSAL, "HIST/")
 PADRAO_ARQUIVO = re.compile(r"^inf_diario_fi_(\d{4})(\d{2})?\.zip$")
-# Fundos imobiliários não fazem parte do universo analítico deste projeto.
-CNPJS_EXCLUIDOS = {
-    "17098794000170",  # CAIXA RIO BRAVO FUNDO DE FII
-    "31887401000139",  # CAIXA RIO BRAVO FUNDO DE FII II
-    "42066916000194",  # FII CAIXA CARTEIRA IMOBILIÁRIA
-}
 LOG = logging.getLogger("cotas_cvm")
 
 
@@ -97,21 +96,12 @@ def _ler_tabela_fundos_numbers(planilha: Path) -> pd.DataFrame:
     )
 
 
-def carregar_fundos(
-    planilha: Path = PLANILHA, banco: Path = BANCO_PADRAO
-) -> pd.DataFrame:
-    """Lê a relação de fundos do Numbers ou, na ausência dele, do DuckDB."""
+def carregar_fundos(planilha: Path = PLANILHA) -> pd.DataFrame:
+    """Lê a relação de fundos do Numbers ou do cadastro PostgreSQL."""
     if not planilha.exists():
-        if not banco.exists():
-            raise FileNotFoundError(
-                f"Planilha e banco de dados não encontrados: {planilha}; {banco}"
-            )
-        with duckdb.connect(str(banco), read_only=True) as conexao:
-            fundos = conexao.execute(
-                "SELECT cnpj, nome FROM fundos ORDER BY nome"
-            ).fetchdf()
+        fundos = listar_cadastro()
         if fundos.empty:
-            raise ValueError("O banco de dados não possui fundos cadastrados.")
+            raise ValueError("O banco não possui fundos cadastrados. Execute a migração inicial.")
         return fundos
     fundos = _ler_tabela_fundos_numbers(planilha)
     ausentes = {"Nome", "CNPJ"} - set(fundos.columns)
@@ -133,10 +123,6 @@ def carregar_fundos(
         raise ValueError(f"CNPJs duplicados na planilha: {lista}")
     fundos = fundos[~fundos["cnpj"].isin(CNPJS_EXCLUIDOS)]
     return fundos[["cnpj", "nome"]].reset_index(drop=True)
-
-
-# Dataframe solicitado pelo projeto. A carga da planilha não inicia downloads.
-cnpj = carregar_fundos()
 
 
 def _abrir_url(url: str, tentativas: int = 4, timeout: int = 90):
@@ -183,55 +169,6 @@ def descobrir_arquivos() -> list[ArquivoCVM]:
     if not arquivos:
         raise RuntimeError("A CVM não retornou arquivos de Informe Diário.")
     return sorted(arquivos, key=lambda item: (item.periodo_inicial, item.nome))
-
-
-def conectar_banco(caminho: Path) -> duckdb.DuckDBPyConnection:
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    conexao = duckdb.connect(str(caminho))
-    conexao.execute("""
-        CREATE TABLE IF NOT EXISTS fundos (
-            cnpj VARCHAR PRIMARY KEY, nome VARCHAR NOT NULL,
-            atualizado_em TIMESTAMP WITH TIME ZONE NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS cotas_diarias (
-            cnpj VARCHAR NOT NULL, id_subclasse VARCHAR NOT NULL DEFAULT '',
-            data DATE NOT NULL, valor_cota DOUBLE NOT NULL,
-            arquivo_origem VARCHAR NOT NULL,
-            atualizado_em TIMESTAMP WITH TIME ZONE NOT NULL,
-            PRIMARY KEY (cnpj, id_subclasse, data)
-        );
-        CREATE TABLE IF NOT EXISTS cargas (
-            arquivo VARCHAR PRIMARY KEY, url VARCHAR NOT NULL,
-            periodo_inicial VARCHAR NOT NULL, periodo_final VARCHAR NOT NULL,
-            processado_em TIMESTAMP WITH TIME ZONE, linhas_inseridas BIGINT,
-            status VARCHAR NOT NULL, erro VARCHAR
-        );
-        CREATE OR REPLACE VIEW fundos_controle AS
-        SELECT f.cnpj, f.nome,
-               MIN(c.data) AS primeira_data_disponivel,
-               MAX(c.data) AS ultima_data_disponivel,
-               COUNT(c.data) AS quantidade_registros,
-               CASE WHEN COUNT(c.data) = 0 THEN 'SEM DADOS' ELSE 'OK' END AS status
-        FROM fundos f LEFT JOIN cotas_diarias c USING (cnpj)
-        GROUP BY f.cnpj, f.nome;
-    """)
-    return conexao
-
-
-def sincronizar_fundos(conexao: duckdb.DuckDBPyConnection, fundos: pd.DataFrame) -> None:
-    agora = datetime.now(timezone.utc)
-    registros = [(linha.cnpj, linha.nome, agora) for linha in fundos.itertuples(index=False)]
-    conexao.executemany(
-        "INSERT OR REPLACE INTO fundos (cnpj, nome, atualizado_em) VALUES (?, ?, ?)", registros
-    )
-    conexao.execute(
-        "DELETE FROM cotas_diarias WHERE cnpj IN (SELECT UNNEST(?::VARCHAR[]))",
-        [list(CNPJS_EXCLUIDOS)],
-    )
-    conexao.execute(
-        "DELETE FROM fundos WHERE cnpj IN (SELECT UNNEST(?::VARCHAR[]))",
-        [list(CNPJS_EXCLUIDOS)],
-    )
 
 
 def baixar_arquivo(arquivo: ArquivoCVM, cache: Path, sobrescrever: bool) -> Path:
@@ -294,61 +231,36 @@ def ler_lotes_filtrados(
                     )
                     lote["data"] = pd.to_datetime(lote["DT_COMPTC"], errors="coerce")
                     lote["valor_cota"] = pd.to_numeric(lote["VL_QUOTA"], errors="coerce")
-                    lote = lote[lote["data"].notna() & (lote["valor_cota"] > 0)]
+                    lote = lote[lote["data"].notna() & np.isfinite(lote["valor_cota"]) & (lote["valor_cota"] > 0)]
                     yield lote[["cnpj", "id_subclasse", "data", "valor_cota"]]
 
 
 def processar_arquivo(
-    conexao: duckdb.DuckDBPyConnection, arquivo: ArquivoCVM, caminho_zip: Path,
+    conexao, arquivo: ArquivoCVM, caminho_zip: Path,
     cnpjs_desejados: set[str], tamanho_lote: int
-) -> int:
-    """Substitui atomicamente no banco os registros provenientes de um arquivo."""
-    total = 0
+) -> ResultadoUpsert:
+    """Aplica correções/novas cotas atomicamente, preservando o histórico ausente."""
     agora = datetime.now(timezone.utc)
-    conexao.execute("BEGIN TRANSACTION")
-    try:
-        conexao.execute("DELETE FROM cotas_diarias WHERE arquivo_origem = ?", [arquivo.nome])
-        for numero, lote in enumerate(
-            ler_lotes_filtrados(caminho_zip, cnpjs_desejados, tamanho_lote), start=1
-        ):
-            lote["arquivo_origem"] = arquivo.nome
-            lote["atualizado_em"] = agora
-            temporaria = f"lote_cvm_{numero}"
-            conexao.register(temporaria, lote)
-            try:
-                conexao.execute(f"""
-                    INSERT OR REPLACE INTO cotas_diarias
-                    SELECT cnpj, id_subclasse, data, valor_cota,
-                           arquivo_origem, atualizado_em
-                    FROM {temporaria}
-                """)
-            finally:
-                conexao.unregister(temporaria)
-            total += len(lote)
-        conexao.execute("""
-            INSERT OR REPLACE INTO cargas
-            VALUES (?, ?, ?, ?, ?, ?, 'OK', NULL)
-        """, [arquivo.nome, arquivo.url, arquivo.periodo_inicial,
-              arquivo.periodo_final, agora, total])
-        conexao.execute("COMMIT")
-    except Exception:
-        conexao.execute("ROLLBACK")
-        raise
-    return total
+
+    def registros():
+        # COPY recebe o arquivo em fluxo; a staging deduplica inclusive entre lotes.
+        for lote in ler_lotes_filtrados(caminho_zip, cnpjs_desejados, tamanho_lote):
+            for r in lote.itertuples(index=False):
+                yield (r.cnpj, r.id_subclasse, r.data.date(), float(r.valor_cota), arquivo.nome, agora)
+
+    with conexao.transaction():
+        resultado = upsert_lote(conexao, 'cotas_diarias', registros())
+        registrar_carga(conexao, arquivo, resultado.inseridas, resultado.atualizadas)
+    return resultado
 
 
-def registrar_erro(
-    conexao: duckdb.DuckDBPyConnection, arquivo: ArquivoCVM, erro: Exception
-) -> None:
-    conexao.execute("""
-        INSERT OR REPLACE INTO cargas
-        VALUES (?, ?, ?, ?, ?, NULL, 'ERRO', ?)
-    """, [arquivo.nome, arquivo.url, arquivo.periodo_inicial, arquivo.periodo_final,
-          datetime.now(timezone.utc), str(erro)[:2000]])
+def registrar_erro(conexao, arquivo: ArquivoCVM, erro: Exception) -> None:
+    # Não persistir mensagens de drivers: podem conter host, usuário ou credenciais.
+    registrar_carga(conexao, arquivo, None, erro=f"Falha no processamento ({type(erro).__name__}).")
 
 
 def selecionar_arquivos(
-    conexao: duckdb.DuckDBPyConnection, arquivos: list[ArquivoCVM],
+    conexao, arquivos: list[ArquivoCVM],
     inicio: str | None, fim: str | None, forcar: bool, meses_reprocessar: int
 ) -> tuple[list[ArquivoCVM], set[str]]:
     filtrados = [
@@ -356,11 +268,7 @@ def selecionar_arquivos(
         if (inicio is None or arquivo.periodo_final >= inicio)
         and (fim is None or arquivo.periodo_inicial <= fim)
     ]
-    concluidos = {
-        linha[0] for linha in conexao.execute(
-            "SELECT arquivo FROM cargas WHERE status = 'OK'"
-        ).fetchall()
-    }
+    concluidos = arquivos_concluidos(conexao)
     mensais = [arquivo.nome for arquivo in filtrados if arquivo.mensal]
     recentes = set(mensais[-meses_reprocessar:]) if meses_reprocessar else set()
     if forcar:
@@ -386,7 +294,6 @@ def criar_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--inicio", type=validar_periodo, help="Primeiro mês (AAAA-MM).")
     parser.add_argument("--fim", type=validar_periodo, help="Último mês (AAAA-MM).")
-    parser.add_argument("--banco", type=Path, default=BANCO_PADRAO)
     parser.add_argument("--cache", type=Path, default=CACHE_PADRAO)
     parser.add_argument(
         "--manter-cache", action="store_true",
@@ -412,8 +319,8 @@ def executar(args: argparse.Namespace) -> int:
         raise ValueError("Os parâmetros numéricos devem ser positivos.")
     fundos = carregar_fundos()
     cnpjs_desejados = set(fundos["cnpj"])
-    LOG.info("%s fundos carregados da planilha", len(fundos))
-    conexao = conectar_banco(args.banco.resolve())
+    LOG.info("%s fundos carregados do cadastro", len(fundos))
+    conexao = conectar_banco()
     falhas = 0
     try:
         sincronizar_fundos(conexao, fundos)
@@ -428,31 +335,27 @@ def executar(args: argparse.Namespace) -> int:
                 caminho = baixar_arquivo(
                     arquivo, args.cache.resolve(), sobrescrever=arquivo.nome in recentes
                 )
-                linhas = processar_arquivo(
+                resultado = processar_arquivo(
                     conexao, arquivo, caminho, cnpjs_desejados, args.tamanho_lote
                 )
-                LOG.info("%s: %s registros dos fundos selecionados", arquivo.nome, linhas)
+                LOG.info("%s: %s inseridas; %s atualizadas", arquivo.nome, resultado.inseridas, resultado.atualizadas)
                 if not args.manter_cache:
                     caminho.unlink(missing_ok=True)
                     LOG.info("Cache removido após a carga: %s", arquivo.nome)
             except Exception as erro:
                 falhas += 1
-                registrar_erro(conexao, arquivo, erro)
-                LOG.exception("Erro ao processar %s", arquivo.nome)
+                try:
+                    # Nova conexão também permite registrar a falha se a anterior caiu.
+                    with conectar_banco() as controle:
+                        registrar_erro(controle, arquivo, erro)
+                except Exception:
+                    LOG.error("Não foi possível registrar a falha no PostgreSQL.")
+                LOG.error("Erro ao processar %s (%s)", arquivo.nome, type(erro).__name__)
+                if conexao.closed or conexao.broken:
+                    raise ErroBanco("Conexão perdida; execute novamente para retomar.") from None
                 if not args.continuar_com_erros:
                     raise
-        conexao.execute("CHECKPOINT")
-        resumo = conexao.execute("""
-            SELECT COUNT(*) AS fundos,
-                   COUNT(primeira_data_disponivel) AS fundos_com_dados,
-                   SUM(quantidade_registros) AS registros,
-                   MIN(primeira_data_disponivel) AS primeira_data,
-                   MAX(ultima_data_disponivel) AS ultima_data
-            FROM fundos_controle
-        """).fetchone()
-        sem_dados = conexao.execute(
-            "SELECT cnpj, nome FROM fundos_controle WHERE status = 'SEM DADOS' ORDER BY nome"
-        ).fetchall()
+        resumo, sem_dados = resumo_cargas(conexao)
         LOG.info(
             "Resumo: %s/%s fundos com dados; %s registros; período %s a %s",
             resumo[1], resumo[0], resumo[2] or 0, resumo[3] or "-", resumo[4] or "-"
@@ -480,8 +383,8 @@ def main() -> int:
     except KeyboardInterrupt:
         LOG.warning("Execução interrompida; o progresso concluído foi preservado.")
         return 130
-    except Exception:
-        LOG.exception("A carga não foi concluída.")
+    except Exception as erro:
+        LOG.error("A carga não foi concluída (%s). Verifique configuração, rede e estrutura dos dados.", type(erro).__name__)
         return 1
 
 
