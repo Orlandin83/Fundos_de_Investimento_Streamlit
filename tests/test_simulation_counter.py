@@ -34,3 +34,10 @@ class ContadorTest(unittest.TestCase):
         contar_analise(self.cotas, self.pesos, {})
         self.assertEqual(registrar.call_count, 3)
         self.assertEqual(len({c.args[0] for c in registrar.call_args_list}), 3)
+
+    @patch('simulation_counter.registrar_simulacao')
+    def test_travas_fazem_parte_da_identidade(self, registrar):
+        contar_analise(self.cotas, self.pesos, self.estado)
+        contar_analise(self.cotas, self.pesos, self.estado, pesos_fixos={'a': .5, 'b': .5})
+        contar_analise(self.cotas, self.pesos, self.estado, pesos_fixos={'b': .5, 'a': .5})
+        self.assertEqual(registrar.call_count, 2)

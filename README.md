@@ -125,6 +125,29 @@ sozinha. O cache de benchmarks existente continua com seis horas.
 Se surgirem subclasses simultâneas para um CNPJ/data, o app informa a
 ambiguidade. Não soma, calcula média ou escolhe uma subclasse silenciosamente.
 
+## Alocações travadas na otimização
+
+Em **Monte sua carteira**, informe um percentual e marque **Travar na otimização**
+no fundo desejado. É possível travar vários fundos; a opção começa desmarcada.
+A fronteira, as duas carteiras otimizadas e as diversificações simuladas respeitam
+os mesmos percentuais fixos. **Distribuir igualmente** divide somente o saldo
+entre os fundos livres. Desmarque a opção para liberar um fundo novamente.
+
+Por exemplo, travar um fundo em 15% deixa 85% para a otimização dos demais.
+Com uma trava ativa, a otimização pode ser consultada antes de completar os
+pesos livres da carteira manual. A comparação com a carteira manual só aparece
+quando ela totaliza 100%.
+
+Permanece o piso de 1% por fundo, inclusive nos percentuais travados. Restrições
+que não deixam saldo suficiente geram uma mensagem e impedem a otimização.
+Se as restrições determinarem uma única carteira, o sistema apresenta essa
+alocação e informa que menor risco e maior retorno coincidem.
+
+O gráfico histórico das carteiras otimizadas usa esses pesos como alocação
+inicial, sem rebalanceamento: os percentuais podem variar durante o histórico.
+Travar uma alocação não implica mantê-la constante nessa simulação retrospectiva.
+Alterar as travas constitui uma nova análise para o contador da sessão.
+
 ## Contador no mesmo banco
 
 Cada linha de `simulacoes` representa uma análise de carteira/fronteira

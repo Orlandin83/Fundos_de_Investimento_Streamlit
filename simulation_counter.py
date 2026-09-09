@@ -7,12 +7,14 @@ import pandas as pd
 from database import registrar_simulacao
 
 
-def contar_analise(cotas: pd.DataFrame, pesos: pd.Series, estado) -> bool:
+def contar_analise(cotas: pd.DataFrame, pesos: pd.Series, estado, pesos_fixos: dict[str, float] | None = None) -> bool:
     ordenadas = cotas.sort_index(axis=1)
     assinatura = sha256()
     assinatura.update(str(tuple(ordenadas.columns)).encode())
     assinatura.update(pd.util.hash_pandas_object(ordenadas, index=True).values.tobytes())
     assinatura.update(pd.util.hash_pandas_object(pesos.reindex(ordenadas.columns), index=True).values.tobytes())
+    if pesos_fixos:
+        assinatura.update(repr(sorted(pesos_fixos.items())).encode())
     chave = assinatura.hexdigest()
     eventos = estado.setdefault('simulacoes_da_sessao', {})
     if chave not in eventos:

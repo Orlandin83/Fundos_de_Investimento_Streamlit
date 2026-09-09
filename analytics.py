@@ -28,6 +28,7 @@ class ResultadoFronteira:
     risco_maximo_retorno: float
     retornos_anuais_fundos: pd.Series
     riscos_anuais_fundos: pd.Series
+    carteira_unica: bool = False
 
 
 def carregar_cotas(
@@ -89,42 +90,87 @@ def _risco(pesos: np.ndarray, covariancia_anual: np.ndarray) -> float:
     return float(np.sqrt(max(variancia, 0.0)))
 
 
+def validar_alocacoes_fixas(
+    cnpjs: list[str],
+    pesos_fixos: dict[str, float] | None = None,
+    alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Retorna pisos/fixações e índices livres; pesos são frações de 1."""
+    fixos = pesos_fixos or {}
+    if not np.isfinite(alocacao_minima) or not 0 <= alocacao_minima <= 1:
+        raise ValueError("A alocação mínima deve estar entre 0% e 100%.")
+    if set(fixos) - set(cnpjs):
+        raise ValueError("Há uma alocação fixada para um fundo fora da seleção.")
+    for valor in fixos.values():
+        if not np.isfinite(valor) or not alocacao_minima <= valor <= 1:
+            raise ValueError(
+                f"Cada alocação fixada deve estar entre {alocacao_minima:.0%} e 100%. "
+                "Ajuste o percentual ou desmarque a fixação."
+            )
+    base = np.array([fixos.get(c, alocacao_minima) for c in cnpjs], dtype=float)
+    livres = np.array([i for i, c in enumerate(cnpjs) if c not in fixos], dtype=int)
+    if base.sum() > 1 + 1e-10:
+        raise ValueError(
+            f"As alocações fixadas não deixam saldo suficiente para o mínimo de "
+            f"{alocacao_minima:.0%} em cada fundo livre. Reduza ou libere uma alocação."
+        )
+    if not len(livres) and not np.isclose(base.sum(), 1, atol=1e-10, rtol=0):
+        raise ValueError("Com todos os fundos fixados, as alocações devem totalizar 100%.")
+    return base, livres
+
+
 def _otimizar_minima_variancia(
     retornos_anuais: np.ndarray,
     covariancia_anual: np.ndarray,
     retorno_alvo: float | None = None,
     alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
+    pesos_base: np.ndarray | None = None,
+    indices_livres: np.ndarray | None = None,
 ) -> np.ndarray:
-    quantidade = len(retornos_anuais)
-    escala_variancia = max(float(np.max(np.abs(covariancia_anual))), 1e-12)
-    restricoes: list[dict[str, object]] = [
-        {"type": "eq", "fun": lambda pesos: float(np.sum(pesos) - 1.0)}
-    ]
-    if retorno_alvo is not None:
-        restricoes.append(
-            {
-                "type": "eq",
-                "fun": lambda pesos, alvo=retorno_alvo: float(
-                    pesos @ retornos_anuais - alvo
-                ),
-            }
-        )
+    # Otimiza apenas o saldo dos ativos livres. A avaliação usa a carteira
+    # completa para incluir as covariâncias com os ativos fixados.
+    base = np.full(len(retornos_anuais), alocacao_minima) if pesos_base is None else pesos_base.copy()
+    livres = np.arange(len(base)) if indices_livres is None else indices_livres
+    saldo = max(0.0, 1.0 - base.sum())
+    if len(livres) <= 1 or saldo <= 1e-10:
+        if len(livres):
+            base[livres[0]] += saldo
+        return base
+
+    def compor(distribuicao):
+        pesos = base.copy()
+        pesos[livres] += saldo * distribuicao
+        return pesos
+
+    escala = max(float(np.max(np.abs(covariancia_anual))), 1e-12)
+    restricoes = [{"type": "eq", "fun": lambda q: float(q.sum() - 1), "jac": lambda q: np.ones(len(q))}]
+    inicial = np.repeat(1.0 / len(livres), len(livres))
+    medias_livres = retornos_anuais[livres]
+    amplitude = float(np.ptp(medias_livres))
+    if retorno_alvo is not None and amplitude > 1e-12:
+        restricoes.append({
+            "type": "eq",
+            "fun": lambda q: float((compor(q) @ retornos_anuais - retorno_alvo) / (saldo * amplitude)),
+            "jac": lambda q: medias_livres / amplitude,
+        })
+        fracao = np.clip((retorno_alvo - base @ retornos_anuais - saldo * medias_livres.min()) / (saldo * amplitude), 0, 1)
+        inicial = np.zeros(len(livres))
+        inicial[int(np.argmin(medias_livres))] = 1 - fracao
+        inicial[int(np.argmax(medias_livres))] = fracao
     resultado = minimize(
-        lambda pesos: float(pesos @ covariancia_anual @ pesos) / escala_variancia,
-        np.repeat(1.0 / quantidade, quantidade),
-        method="SLSQP",
-        bounds=[(alocacao_minima, 1.0)] * quantidade,
-        constraints=restricoes,
+        lambda q: float(compor(q) @ covariancia_anual @ compor(q)) / escala,
+        inicial,
+        jac=lambda q: 2 * saldo * (covariancia_anual @ compor(q))[livres] / escala,
+        method="SLSQP", bounds=[(0.0, 1.0)] * len(livres), constraints=restricoes,
         options={"ftol": 1e-12, "maxiter": 2_000},
     )
     if not resultado.success:
         raise RuntimeError(f"A otimização não convergiu: {resultado.message}")
-    pesos = np.clip(resultado.x, alocacao_minima, 1.0)
-    excedente = np.maximum(pesos - alocacao_minima, 0.0)
-    restante = 1.0 - alocacao_minima * quantidade
-    if excedente.sum() <= 0:
-        return np.repeat(1.0 / quantidade, quantidade)
-    return alocacao_minima + restante * excedente / excedente.sum()
+    q = np.clip(resultado.x, 0, 1)
+    pesos = compor(q / q.sum())
+    if retorno_alvo is not None and not np.isclose(pesos @ retornos_anuais, retorno_alvo, atol=1e-8, rtol=1e-7):
+        raise RuntimeError("A otimização não atingiu o retorno solicitado.")
+    return pesos
 
 
 def calcular_fronteira_eficiente(
@@ -132,14 +178,14 @@ def calcular_fronteira_eficiente(
     quantidade_pontos: int = 60,
     quantidade_simulacoes: int = 3_000,
     alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
+    pesos_fixos: dict[str, float] | None = None,
 ) -> ResultadoFronteira:
     """Calcula a fronteira long-only com piso por fundo e dados anualizados."""
     if cotas.shape[1] < 2:
         raise ValueError("Selecione pelo menos dois fundos para a fronteira eficiente.")
-    if alocacao_minima < 0 or alocacao_minima * cotas.shape[1] >= 1.0:
-        raise ValueError(
-            "A alocação mínima deve ser positiva e permitir que os pesos totalizem 100%."
-        )
+    base, livres = validar_alocacoes_fixas(list(cotas.columns), pesos_fixos, alocacao_minima)
+    saldo = max(0.0, 1.0 - base.sum())
+    carteira_unica = len(livres) <= 1 or saldo <= 1e-10
     retornos = cotas.pct_change(fill_method=None).dropna(how="any")
     if len(retornos) < MINIMO_OBSERVACOES:
         raise ValueError(
@@ -154,43 +200,39 @@ def calcular_fronteira_eficiente(
         raise ValueError("Os retornos não produziram estimativas financeiras válidas.")
 
     pesos_minimo = _otimizar_minima_variancia(
-        medias, covariancia, alocacao_minima=alocacao_minima
+        medias, covariancia, alocacao_minima=alocacao_minima,
+        pesos_base=base, indices_livres=livres
     )
     retorno_minimo = float(pesos_minimo @ medias)
     risco_minimo = _risco(pesos_minimo, covariancia)
 
-    indice_maior_retorno = int(np.argmax(medias))
-    pesos_maximo = np.full(len(medias), alocacao_minima)
-    pesos_maximo[indice_maior_retorno] += 1.0 - alocacao_minima * len(medias)
+    pesos_maximo = base.copy()
+    pesos_extremo_inferior = base.copy()
+    if len(livres):
+        pesos_maximo[livres[int(np.argmax(medias[livres]))]] += saldo
+        pesos_extremo_inferior[livres[int(np.argmin(medias[livres]))]] += saldo
     retorno_maximo = float(pesos_maximo @ medias)
     risco_maximo = _risco(pesos_maximo, covariancia)
-
-    # Percorre toda a curva de mínima variância: do ativo/carteira com menor
-    # retorno esperado, passa pelo ponto de menor risco e segue até o maior retorno.
-    # O ramo a partir do menor risco é a fronteira eficiente em sentido estrito.
-    pesos_extremo_inferior = np.full(len(medias), alocacao_minima)
-    pesos_extremo_inferior[int(np.argmin(medias))] += 1.0 - alocacao_minima * len(medias)
     retorno_extremo_inferior = float(pesos_extremo_inferior @ medias)
-    alvos = np.linspace(
-        retorno_extremo_inferior, retorno_maximo, max(3, quantidade_pontos)
-    )
-    pontos: list[dict[str, object]] = []
-    for alvo in alvos:
-        try:
+
+    # Em empates de retorno, prefere a carteira de menor risco.
+    retorno_constante = abs(retorno_maximo - retorno_extremo_inferior) <= 1e-12
+    if retorno_constante:
+        pesos_maximo = pesos_minimo.copy()
+        retorno_maximo, risco_maximo = retorno_minimo, risco_minimo
+    pontos = [{"risco": risco_minimo, "retorno": retorno_minimo, "pesos": pesos_minimo}]
+    if not carteira_unica and not retorno_constante:
+        pontos.extend([
+            {"risco": _risco(pesos_extremo_inferior, covariancia),
+             "retorno": retorno_extremo_inferior, "pesos": pesos_extremo_inferior},
+            {"risco": risco_maximo, "retorno": retorno_maximo, "pesos": pesos_maximo},
+        ])
+        for alvo in np.linspace(retorno_extremo_inferior, retorno_maximo, max(3, quantidade_pontos))[1:-1]:
             pesos = _otimizar_minima_variancia(
-                medias, covariancia, float(alvo), alocacao_minima
+                medias, covariancia, float(alvo), alocacao_minima, base, livres
             )
-        except RuntimeError:
-            continue
-        pontos.append(
-            {
-                "risco": _risco(pesos, covariancia),
-                "retorno": float(pesos @ medias),
-                "pesos": pesos,
-            }
-        )
-    if len(pontos) < 2:
-        raise RuntimeError("Não foi possível construir pontos suficientes da fronteira.")
+            pontos.append({"risco": _risco(pesos, covariancia), "retorno": float(pesos @ medias), "pesos": pesos})
+    pontos.sort(key=lambda ponto: ponto["retorno"])
 
     riscos_fundos = pd.Series(np.sqrt(np.diag(covariancia)), index=nomes)
     retornos_fundos = pd.Series(medias, index=nomes)
@@ -198,9 +240,9 @@ def calcular_fronteira_eficiente(
     # Amostra reprodutível de outras alocações long-only para dar contexto
     # visual à fronteira otimizada, respeitando o mesmo piso de alocação.
     gerador = np.random.default_rng(42)
-    pesos_testados = alocacao_minima + (
-        1.0 - alocacao_minima * len(nomes)
-    ) * gerador.dirichlet(np.ones(len(nomes)), size=quantidade_simulacoes)
+    pesos_testados = np.tile(base, (quantidade_simulacoes, 1))
+    if len(livres):
+        pesos_testados[:, livres] += saldo * gerador.dirichlet(np.ones(len(livres)), size=quantidade_simulacoes)
     retornos_testados = pesos_testados @ medias
     variancias_testadas = np.einsum(
         "ij,jk,ik->i", pesos_testados, covariancia, pesos_testados
@@ -222,6 +264,7 @@ def calcular_fronteira_eficiente(
         risco_maximo_retorno=risco_maximo,
         retornos_anuais_fundos=retornos_fundos,
         riscos_anuais_fundos=riscos_fundos,
+        carteira_unica=carteira_unica,
     )
 
 
