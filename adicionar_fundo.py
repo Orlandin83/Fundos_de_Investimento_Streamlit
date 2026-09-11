@@ -63,12 +63,12 @@ def importar_historico(fundos):
                 print(f"  {resultado.inseridas} cotas inseridas; {resultado.atualizadas} atualizadas.", flush=True)
                 caminho.unlink()
         resumo = conexao.execute("""
-            SELECT f.cnpj, f.nome, COUNT(c.data), MIN(c.data), MAX(c.data)
+            SELECT f.cnpj, f.nome, COALESCE(c.id_subclasse, ''), COUNT(c.data), MIN(c.data), MAX(c.data)
             FROM public.fundos f LEFT JOIN public.cotas_diarias c USING (cnpj)
-            WHERE f.cnpj = ANY(%s) GROUP BY f.cnpj, f.nome ORDER BY f.nome
+            WHERE f.cnpj = ANY(%s) GROUP BY f.cnpj, f.nome, c.id_subclasse ORDER BY f.nome, c.id_subclasse
         """, [list(fundos["cnpj"])]).fetchall()
-        for cnpj, nome, quantidade, inicio, fim in resumo:
-            print(f"{nome} ({cnpj}): {quantidade} cotas; {inicio or '-'} a {fim or '-'}")
+        for cnpj, nome, subclasse, quantidade, inicio, fim in resumo:
+            print(f"{nome} ({cnpj}) — {subclasse or 'Sem subclasse informada'}: {quantidade} cotas; {inicio or '-'} a {fim or '-'}")
             if not quantidade:
                 print("  Nenhuma cota encontrada nos Informes Diários para este CNPJ.")
     print("Importação concluída. Os fundos estão cadastrados para as próximas atualizações.")

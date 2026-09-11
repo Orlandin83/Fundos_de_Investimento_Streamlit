@@ -159,8 +159,17 @@ O contador tem cache de 60 segundos, invalidado após um novo evento. Dados
 novos aparecem na próxima interação após o TTL; uma tela inativa não se atualiza
 sozinha. O cache de benchmarks existente continua com seis horas.
 
-Se surgirem subclasses simultâneas para um CNPJ/data, o app informa a
-ambiguidade. Não soma, calcula média ou escolhe uma subclasse silenciosamente.
+O aplicativo oferece cada combinação de CNPJ e subclasse como uma opção
+independente. É possível selecionar duas subclasses do mesmo CNPJ, comparar
+seus retornos e atribuir pesos separados na carteira. O nome cadastrado recebe
+o identificador da subclasse informado pela CVM; não há associação automática
+com nomes comerciais como Geral ou Singular.
+
+A extração já importa todas as subclasses encontradas e o resumo da inclusão
+mostra a cobertura de cada uma. Não é necessário importar novamente dados já
+gravados para usar a seleção por subclasse. Registros sem identificador ficam
+em uma série separada, sem serem unidos automaticamente a outra subclasse.
+A consulta antiga por CNPJ simples continua rejeitando séries simultâneas.
 
 ## Alocações travadas na otimização
 

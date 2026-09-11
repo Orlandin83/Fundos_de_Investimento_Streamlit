@@ -44,7 +44,7 @@ def carregar_cotas(
     if dados.empty:
         return pd.DataFrame()
     if dados.duplicated(['data', 'cnpj']).any():
-        raise ValueError('Existem subclasses simultâneas para um fundo nesta janela. Selecione outro período; a série não será agregada automaticamente.')
+        raise ValueError('Existem subclasses simultâneas para um fundo nesta janela. Selecione uma série por subclasse; a série não será agregada automaticamente.')
     cotas = dados.pivot(index="data", columns="cnpj", values="valor_cota").sort_index()
     cotas.index = pd.to_datetime(cotas.index)
     cotas = cotas.reindex(columns=list(cnpjs))

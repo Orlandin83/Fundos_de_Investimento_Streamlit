@@ -6,10 +6,34 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 
 class DashboardTest(unittest.TestCase):
+    def setUp(self):
+        st.cache_data.clear()
+
+    def test_duas_subclasses_do_mesmo_cnpj(self):
+        datas = pd.bdate_range('2026-08-01', periods=25)
+        ids = ['68258527000154::A', '68258527000154::B']
+        fundos = pd.DataFrame({'cnpj': ['68258527000154'] * 2,
+                               'id_serie': ids, 'nome': ['Fundo — Subclasse A', 'Fundo — Subclasse B']})
+        cotas = pd.DataFrame({ids[0]: np.linspace(1, 1.1, 25), ids[1]: np.linspace(2, 2.3, 25)}, index=datas)
+        with (patch('analytics.listar_fundos', return_value=fundos),
+              patch('analytics.limites_do_banco', return_value=(datas[0], datas[-1])),
+              patch('analytics.carregar_cotas', side_effect=lambda ids, *a, **k: cotas[list(ids)]),
+              patch('database.total_simulacoes', return_value=0),
+              patch('simulation_counter.contar_analise', return_value=False)):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py')).run(timeout=30)
+            app.multiselect[0].set_value(ids).run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertFalse(app.error)
+            self.assertEqual([n.value for n in app.number_input], [50, 50])
+            grafico = json.loads(app.get('plotly_chart')[0].proto.spec)
+            nomes = {t['name'] for t in grafico['data'] if t.get('mode') == 'lines'}
+            self.assertEqual(nomes, set(fundos.nome))
+
     def test_selecao_pesos_e_distribuicao(self):
         datas = pd.bdate_range('2024-01-02', periods=100)
         rng = np.random.default_rng(42)

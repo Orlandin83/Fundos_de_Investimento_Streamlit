@@ -284,9 +284,14 @@ try:
 except (ErroBanco, ValueError) as erro:
     st.error(str(erro))
     st.stop()
+# Cada opção representa uma série (CNPJ + subclasse), com pesos independentes.
+fundos = fundos.copy()
+fundos['cnpj_original'] = fundos['cnpj']
+if 'id_serie' in fundos:
+    fundos['cnpj'] = fundos['id_serie']
 nomes_por_cnpj = dict(zip(fundos["cnpj"], fundos["nome"]))
 rotulos = {
-    linha.cnpj: f"{linha.nome}  ·  {linha.cnpj}"
+    linha.cnpj: f"{linha.nome}  ·  {linha.cnpj_original}"
     for linha in fundos.itertuples(index=False)
 }
 

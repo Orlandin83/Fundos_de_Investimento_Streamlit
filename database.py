@@ -74,10 +74,22 @@ def listar_cadastro() -> pd.DataFrame:
 def listar_fundos() -> pd.DataFrame:
     with operacao_banco() as conexao:
         dados = consultar_dataframe(conexao, '''
-            SELECT cnpj, nome, primeira_data_disponivel, ultima_data_disponivel,
-                   quantidade_registros, status
-            FROM public.fundos_controle WHERE NOT (cnpj = ANY(%s)) ORDER BY nome
+            SELECT f.cnpj, f.nome, COALESCE(c.id_subclasse, '') AS id_subclasse,
+                   MIN(c.data) AS primeira_data_disponivel,
+                   MAX(c.data) AS ultima_data_disponivel,
+                   COUNT(c.data) AS quantidade_registros,
+                   CASE WHEN COUNT(c.data) = 0 THEN 'SEM DADOS' ELSE 'OK' END AS status
+            FROM public.fundos f LEFT JOIN public.cotas_diarias c USING (cnpj)
+            WHERE NOT (f.cnpj = ANY(%s))
+            GROUP BY f.cnpj, f.nome, c.id_subclasse ORDER BY f.nome, c.id_subclasse
         ''', [list(CNPJS_EXCLUIDOS)])
+    dados['id_serie'] = dados['cnpj'] + '::' + dados['id_subclasse']
+    multiplas = dados['cnpj'].duplicated(keep=False)
+    rotular = multiplas | dados['id_subclasse'].ne('')
+    dados.loc[rotular, 'nome'] = (
+        dados.loc[rotular, 'nome'] + ' — '
+        + dados.loc[rotular, 'id_subclasse'].map(lambda s: f'Subclasse {s}' if s else 'Sem subclasse informada')
+    )
     for coluna in ('primeira_data_disponivel', 'ultima_data_disponivel'):
         dados[coluna] = pd.to_datetime(dados[coluna]).astype('datetime64[us]')
     return dados
@@ -92,11 +104,25 @@ def limites_do_banco() -> tuple[pd.Timestamp, pd.Timestamp]:
 
 
 def consultar_cotas(cnpjs, inicio, fim) -> pd.DataFrame:
+    # Identificadores explícitos selecionam uma única subclasse, inclusive a vazia.
+    # CNPJs simples continuam disponíveis para os consumidores antigos.
+    series = [chave.split('::', 1) for chave in cnpjs if '::' in chave]
+    simples = [chave for chave in cnpjs if '::' not in chave]
     with operacao_banco() as conexao:
         dados = consultar_dataframe(conexao, '''
-            SELECT data, cnpj, valor_cota FROM public.cotas_diarias
-            WHERE cnpj = ANY(%s) AND data BETWEEN %s AND %s ORDER BY data, cnpj
-        ''', [list(cnpjs), inicio, fim])
+            SELECT c.data, s.chave AS cnpj, c.valor_cota
+            FROM public.cotas_diarias c
+            JOIN (
+                SELECT unnest(%s::text[]) AS cnpj,
+                       unnest(%s::text[]) AS id_subclasse,
+                       unnest(%s::text[]) AS chave
+                UNION ALL
+                SELECT p, NULL::text, p FROM unnest(%s::text[]) AS p
+            ) s ON c.cnpj = s.cnpj
+               AND (s.id_subclasse IS NULL OR c.id_subclasse = s.id_subclasse)
+            WHERE c.data BETWEEN %s AND %s ORDER BY c.data, s.chave
+        ''', [[s[0] for s in series], [s[1] for s in series],
+              ['::'.join(s) for s in series], simples, inicio, fim])
     # Usa resolução de microssegundos consistente nos joins e gráficos.
     dados['data'] = pd.to_datetime(dados['data']).astype('datetime64[us]')
     return dados

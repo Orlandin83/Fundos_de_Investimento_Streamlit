@@ -18,7 +18,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from analytics import carregar_cotas
 from cnpj import ArquivoCVM, carregar_fundos, criar_parser, executar, processar_arquivo
-from database import aplicar_schema, conectar_banco, registrar_simulacao, total_simulacoes, upsert_lote
+from database import aplicar_schema, conectar_banco, listar_fundos, registrar_simulacao, total_simulacoes, upsert_lote
 
 
 @unittest.skipUnless(os.environ.get('TEST_DATABASE_URL'), 'Defina TEST_DATABASE_URL para PostgreSQL local descartável')
@@ -61,6 +61,17 @@ class PostgreSQLTest(unittest.TestCase):
         r = upsert_lote(self.conexao, 'cotas_diarias', [self.registro(2), self.registro(3)])
         self.assertEqual((r.inseridas, r.atualizadas), (1, 0))
         self.assertEqual(self.conexao.execute('SELECT valor_cota FROM public.cotas_diarias').fetchone()[0], 3)
+
+    def test_series_separadas_por_subclasse(self):
+        upsert_lote(self.conexao, 'cotas_diarias', [self.registro(1), self.registro(2, subclasse='A'),
+                                                   self.registro(3, dia=2, subclasse='A')])
+        fundos = listar_fundos()
+        self.assertEqual(set(fundos.id_serie), {self.cnpj + '::', self.cnpj + '::A'})
+        series = [self.cnpj + '::', self.cnpj + '::A']
+        cotas = carregar_cotas(series, pd.Timestamp('2026-01-01'), pd.Timestamp('2026-01-02'), datas_comuns=False)
+        self.assertEqual(cotas.iloc[0].tolist(), [1, 2])
+        self.assertTrue(pd.isna(cotas.iloc[1, 0]))
+        self.assertEqual(cotas.iloc[1, 1], 3)
 
     def test_transacao_desfaz_todos_lotes(self):
         arquivo = ArquivoCVM('teste.zip', 'https://exemplo.invalid/teste.zip', '2026-01', '2026-01', True)
