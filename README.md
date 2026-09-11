@@ -171,12 +171,10 @@ Em bancos existentes, aplique `supabase/nomes_subclasses.sql` como proprietário
 antes de executar esta versão do aplicativo. As permissões da tabela `fundos`
 continuam sendo utilizadas. A coleta regular preserva esse campo.
 
-O comando `python incluir_impulso.py` cadastra Singular, Geral, Private e Boreal
-(exclusivo), do CNPJ `68258527000154`, e importa cotas desde julho de 2026
-(mês de constituição confirmado no cadastro CVM). Pode ser executado novamente
-sem duplicar cotas. O script informa a cobertura de cada subclasse e não altera
-o controle global de cargas. Subclasses ainda sem publicações continuam
-cadastradas para as próximas coletas automáticas.
+As subclasses Singular, Geral, Private e Boreal (exclusivo), do CNPJ
+`68258527000154`, já estão cadastradas no Supabase. A rotina `cnpj.py`
+mantém suas cotas atualizadas e preserva os nomes cadastrados. Subclasses
+ainda sem publicações continuam cadastradas para as próximas coletas automáticas.
 
 A extração já importa todas as subclasses encontradas e o resumo da inclusão
 mostra a cobertura de cada uma. Não é necessário importar novamente dados já
