@@ -74,14 +74,21 @@ def listar_cadastro() -> pd.DataFrame:
 def listar_fundos() -> pd.DataFrame:
     with operacao_banco() as conexao:
         dados = consultar_dataframe(conexao, '''
-            SELECT f.cnpj, f.nome, COALESCE(c.id_subclasse, '') AS id_subclasse,
+            SELECT f.cnpj, f.nome, COALESCE(s.id_subclasse, '') AS id_subclasse,
+                   f.nomes_subclasses ->> s.id_subclasse AS nome_subclasse,
                    MIN(c.data) AS primeira_data_disponivel,
                    MAX(c.data) AS ultima_data_disponivel,
                    COUNT(c.data) AS quantidade_registros,
                    CASE WHEN COUNT(c.data) = 0 THEN 'SEM DADOS' ELSE 'OK' END AS status
-            FROM public.fundos f LEFT JOIN public.cotas_diarias c USING (cnpj)
+            FROM public.fundos f
+            LEFT JOIN LATERAL (
+                SELECT id_subclasse FROM public.cotas_diarias WHERE cnpj = f.cnpj GROUP BY id_subclasse
+                UNION
+                SELECT jsonb_object_keys(f.nomes_subclasses)
+            ) s ON true
+            LEFT JOIN public.cotas_diarias c ON c.cnpj = f.cnpj AND c.id_subclasse = s.id_subclasse
             WHERE NOT (f.cnpj = ANY(%s))
-            GROUP BY f.cnpj, f.nome, c.id_subclasse ORDER BY f.nome, c.id_subclasse
+            GROUP BY f.cnpj, f.nome, s.id_subclasse ORDER BY f.nome, s.id_subclasse
         ''', [list(CNPJS_EXCLUIDOS)])
     dados['id_serie'] = dados['cnpj'] + '::' + dados['id_subclasse']
     multiplas = dados['cnpj'].duplicated(keep=False)
@@ -90,6 +97,8 @@ def listar_fundos() -> pd.DataFrame:
         dados.loc[rotular, 'nome'] + ' — '
         + dados.loc[rotular, 'id_subclasse'].map(lambda s: f'Subclasse {s}' if s else 'Sem subclasse informada')
     )
+    nome_definido = dados['nome_subclasse'].notna() & dados['nome_subclasse'].ne('')
+    dados.loc[nome_definido, 'nome'] = dados.loc[nome_definido, 'nome_subclasse']
     for coluna in ('primeira_data_disponivel', 'ultima_data_disponivel'):
         dados[coluna] = pd.to_datetime(dados[coluna]).astype('datetime64[us]')
     return dados

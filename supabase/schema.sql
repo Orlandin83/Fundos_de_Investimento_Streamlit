@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS public.fundos (
     nome TEXT NOT NULL,
     atualizado_em TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE public.fundos ADD COLUMN IF NOT EXISTS nomes_subclasses JSONB NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS public.cotas_diarias (
     cnpj TEXT NOT NULL,
     id_subclasse TEXT NOT NULL DEFAULT '',

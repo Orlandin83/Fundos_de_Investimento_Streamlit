@@ -73,6 +73,20 @@ class PostgreSQLTest(unittest.TestCase):
         self.assertTrue(pd.isna(cotas.iloc[1, 0]))
         self.assertEqual(cotas.iloc[1, 1], 3)
 
+    def test_nomes_subclasses_incluem_series_sem_cotas(self):
+        self.conexao.execute('UPDATE public.fundos SET nomes_subclasses = %s::jsonb WHERE cnpj = %s',
+                             ['{"A": "Fundo Singular", "B": "Fundo Geral"}', self.cnpj])
+        upsert_lote(self.conexao, 'cotas_diarias', [self.registro(2, subclasse='A')])
+        fundos = listar_fundos().set_index('id_subclasse')
+        self.assertEqual(set(fundos.index), {'A', 'B'})
+        self.assertEqual(fundos.loc['A', 'nome'], 'Fundo Singular')
+        self.assertEqual(fundos.loc['B', 'nome'], 'Fundo Geral')
+        self.assertEqual(fundos.loc['B', 'status'], 'SEM DADOS')
+        self.assertEqual(fundos.loc['B', 'quantidade_registros'], 0)
+        # A coleta regular pode atualizar o nome base sem apagar os nomes das subclasses.
+        upsert_lote(self.conexao, 'fundos', [(self.cnpj, 'Nome base atualizado', self.agora)])
+        self.assertEqual(set(listar_fundos().nome), {'Fundo Singular', 'Fundo Geral'})
+
     def test_transacao_desfaz_todos_lotes(self):
         arquivo = ArquivoCVM('teste.zip', 'https://exemplo.invalid/teste.zip', '2026-01', '2026-01', True)
         upsert_lote(self.conexao, 'cotas_diarias', [self.registro(1)])

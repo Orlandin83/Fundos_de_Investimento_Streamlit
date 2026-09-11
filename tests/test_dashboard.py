@@ -34,6 +34,20 @@ class DashboardTest(unittest.TestCase):
             nomes = {t['name'] for t in grafico['data'] if t.get('mode') == 'lines'}
             self.assertEqual(nomes, set(fundos.nome))
 
+    def test_subclasse_cadastrada_sem_cotas(self):
+        datas = pd.bdate_range('2026-08-01', periods=25)
+        chave = '68258527000154::E5NM31787344975'
+        fundos = pd.DataFrame({'cnpj': ['68258527000154'], 'id_serie': [chave],
+                               'nome': ['CAIXA Impulso — Geral']})
+        with (patch('analytics.listar_fundos', return_value=fundos),
+              patch('analytics.limites_do_banco', return_value=(datas[0], datas[-1])),
+              patch('analytics.carregar_cotas', return_value=pd.DataFrame()),
+              patch('database.total_simulacoes', return_value=0)):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py')).run(timeout=30)
+            app.multiselect[0].set_value([chave]).run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertTrue(any('CAIXA Impulso — Geral' in w.value for w in app.warning))
+
     def test_selecao_pesos_e_distribuicao(self):
         datas = pd.bdate_range('2024-01-02', periods=100)
         rng = np.random.default_rng(42)

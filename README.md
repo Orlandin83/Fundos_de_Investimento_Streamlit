@@ -25,7 +25,7 @@ idempotente, sem remover dados:
 
 | Objeto | Campos e tipos PostgreSQL | Chave |
 |---|---|---|
-| `fundos` | `cnpj TEXT`, `nome TEXT`, `atualizado_em TIMESTAMPTZ` | `cnpj` |
+| `fundos` | `cnpj TEXT`, `nome TEXT`, `atualizado_em TIMESTAMPTZ`, `nomes_subclasses JSONB DEFAULT '{}'` | `cnpj` |
 | `cotas_diarias` | `cnpj TEXT`, `id_subclasse TEXT DEFAULT ''`, `data DATE`, `valor_cota DOUBLE PRECISION`, `arquivo_origem TEXT`, `atualizado_em TIMESTAMPTZ` | `(cnpj, id_subclasse, data)` |
 | `cargas` | `arquivo TEXT`, `url TEXT`, `periodo_inicial TEXT`, `periodo_final TEXT`, `processado_em TIMESTAMPTZ`, `linhas_inseridas BIGINT`, `status TEXT`, `erro TEXT`, `linhas_atualizadas BIGINT DEFAULT 0` | `arquivo` |
 | `simulacoes` | `id UUID`, `criado_em TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP` | `id` |
@@ -161,9 +161,22 @@ sozinha. O cache de benchmarks existente continua com seis horas.
 
 O aplicativo oferece cada combinação de CNPJ e subclasse como uma opção
 independente. É possível selecionar duas subclasses do mesmo CNPJ, comparar
-seus retornos e atribuir pesos separados na carteira. O nome cadastrado recebe
-o identificador da subclasse informado pela CVM; não há associação automática
-com nomes comerciais como Geral ou Singular.
+seus retornos e atribuir pesos separados na carteira. O campo `nomes_subclasses`
+do cadastro associa cada identificador CVM ao nome de exibição. Sem essa
+associação, o nome cadastrado recebe o identificador da subclasse.
+Subclasses com nome cadastrado, mas sem cotas, aparecem com status `SEM DADOS`;
+o aplicativo avisa quando não há dados para a análise.
+
+Em bancos existentes, aplique `supabase/nomes_subclasses.sql` como proprietário
+antes de executar esta versão do aplicativo. As permissões da tabela `fundos`
+continuam sendo utilizadas. A coleta regular preserva esse campo.
+
+O comando `python incluir_impulso.py` cadastra Singular, Geral, Private e Boreal
+(exclusivo), do CNPJ `68258527000154`, e importa cotas desde julho de 2026
+(mês de constituição confirmado no cadastro CVM). Pode ser executado novamente
+sem duplicar cotas. O script informa a cobertura de cada subclasse e não altera
+o controle global de cargas. Subclasses ainda sem publicações continuam
+cadastradas para as próximas coletas automáticas.
 
 A extração já importa todas as subclasses encontradas e o resumo da inclusão
 mostra a cobertura de cada uma. Não é necessário importar novamente dados já
