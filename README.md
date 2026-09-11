@@ -89,11 +89,48 @@ python -m pip install -r requirements.txt
 python database.py --aplicar-schema
 ```
 
-Cadastre os fundos na tabela `fundos` (CNPJ, nome e `atualizado_em`) ou forneça
-localmente o arquivo `Fundos CAIXA.numbers` com as colunas Nome e CNPJ.
+Cadastre os fundos com `python adicionar_fundo.py`, conforme abaixo, ou
+diretamente na tabela `fundos` (CNPJ, nome e `atualizado_em`).
 Execute `python cnpj.py --meses-reprocessar 2` para carregar o histórico da CVM.
 A primeira coleta percorre os arquivos disponíveis e pode demorar.
 Não há armazenamento persistente de cotas em arquivos locais.
+
+## Incluir fundos e importar todo o histórico
+
+Com as dependências instaladas e `DATABASE_URL` configurada no `.env`, execute:
+
+```bash
+python adicionar_fundo.py
+```
+
+No menu, escolha `1` para incluir, `2` para alterar o nome, `3` para excluir
+um cadastro ou `0` para sair. Alteração e exclusão localizam o fundo pelo CNPJ
+e mostram seu nome atual. A exclusão pede confirmação e preserva as cotas
+históricas, removendo o fundo do aplicativo e das próximas coletas. O cache do
+aplicativo pode levar até cinco minutos para refletir a alteração.
+A exclusão exige permissão `DELETE` em `public.fundos` e política RLS compatível
+(ou conexão proprietária); o grupo `fundos_coletor` não possui essa permissão.
+
+Na opção `1`, informe CNPJ (com ou sem pontuação) e nome. O programa pergunta se deseja
+incluir outro CNPJ; responda `s` para continuar ou `n` para iniciar a importação.
+São aceitos CNPJs numéricos com dígitos verificadores válidos, exceto os fundos
+explicitamente excluídos do projeto.
+
+O script cadastra os fundos no Supabase e percorre todos os ZIPs disponíveis
+nos diretórios de Informes Diários da CVM, filtrando os CNPJs informados.
+Cada ZIP é baixado uma vez para todos eles, e suas cotas são gravadas em uma
+transação. O histórico disponível pode começar depois da criação do fundo;
+um CNPJ sem cotas recebe um aviso ao final.
+
+Não é necessário alterar o schema. A importação não usa nem altera o controle
+global `cargas`, pois abrange apenas os fundos informados. Se houver falha,
+execute novamente com os mesmos CNPJs: todos os arquivos serão relidos, sem
+duplicar cotas já gravadas. Não há retomada por arquivo nesta versão simples.
+Os ZIPs temporários são removidos e o resumo mostra quantidade e datas por fundo.
+O nome informado atualiza o cadastro caso o CNPJ já exista.
+
+As próximas execuções de `cnpj.py` consultam o cadastro do banco, incluindo os
+novos fundos mesmo que exista uma planilha Numbers local.
 
 ## Executar e validar o Streamlit
 
@@ -171,8 +208,9 @@ evento poderá não ser contabilizado.
 python cnpj.py --meses-reprocessar 2
 ```
 
-O universo vem do Numbers local quando disponível ou de `fundos` no PostgreSQL
-(GitHub/Streamlit não precisam do Numbers). O cadastro precisa estar preenchido
+O universo vem de `fundos` no PostgreSQL, inclusive nas execuções locais.
+A leitura de Numbers permanece disponível via `carregar_fundos(caminho)` para
+uso explícito em Python. O cadastro precisa estar preenchido
 antes de iniciar a automação. Os três FIIs excluídos continuam fora das análises
 e das novas coletas, mas seus registros existentes não são apagados.
 

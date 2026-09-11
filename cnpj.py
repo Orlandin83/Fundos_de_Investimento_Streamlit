@@ -96,9 +96,9 @@ def _ler_tabela_fundos_numbers(planilha: Path) -> pd.DataFrame:
     )
 
 
-def carregar_fundos(planilha: Path = PLANILHA) -> pd.DataFrame:
+def carregar_fundos(planilha: Path | None = None) -> pd.DataFrame:
     """Lê a relação de fundos do Numbers ou do cadastro PostgreSQL."""
-    if not planilha.exists():
+    if planilha is None or not planilha.exists():
         fundos = listar_cadastro()
         if fundos.empty:
             raise ValueError("O banco não possui fundos cadastrados. Cadastre os fundos antes de executar o coletor.")
@@ -237,7 +237,7 @@ def ler_lotes_filtrados(
 
 def processar_arquivo(
     conexao, arquivo: ArquivoCVM, caminho_zip: Path,
-    cnpjs_desejados: set[str], tamanho_lote: int
+    cnpjs_desejados: set[str], tamanho_lote: int, *, registrar_controle: bool = True
 ) -> ResultadoUpsert:
     """Aplica correções/novas cotas atomicamente, preservando o histórico ausente."""
     agora = datetime.now(timezone.utc)
@@ -250,7 +250,8 @@ def processar_arquivo(
 
     with conexao.transaction():
         resultado = upsert_lote(conexao, 'cotas_diarias', registros())
-        registrar_carga(conexao, arquivo, resultado.inseridas, resultado.atualizadas)
+        if registrar_controle:
+            registrar_carga(conexao, arquivo, resultado.inseridas, resultado.atualizadas)
     return resultado
 
 
