@@ -318,6 +318,7 @@ def executar(args: argparse.Namespace) -> int:
         raise ValueError("--inicio não pode ser posterior a --fim.")
     if args.meses_reprocessar < 0 or args.tamanho_lote <= 0:
         raise ValueError("Os parâmetros numéricos devem ser positivos.")
+    LOG.info("Conectando ao PostgreSQL e lendo o cadastro de fundos...")
     fundos = carregar_fundos()
     cnpjs_desejados = set(fundos["cnpj"])
     LOG.info("%s fundos carregados do cadastro", len(fundos))
@@ -384,6 +385,9 @@ def main() -> int:
     except KeyboardInterrupt:
         LOG.warning("Execução interrompida; o progresso concluído foi preservado.")
         return 130
+    except ErroBanco as erro:
+        LOG.error("A carga não foi concluída: %s", erro)
+        return 1
     except Exception as erro:
         LOG.error("A carga não foi concluída (%s). Verifique configuração, rede e estrutura dos dados.", type(erro).__name__)
         return 1

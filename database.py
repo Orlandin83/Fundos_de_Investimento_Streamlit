@@ -29,6 +29,37 @@ class ErroBanco(RuntimeError):
     """Mensagem segura: não inclui connection string nem detalhes do servidor."""
 
 
+def diagnostico_banco(erro: psycopg.Error) -> str:
+    """Traduz o erro em texto fixo; nunca devolve mensagens do driver.
+
+    Falhas durante a conexão podem chegar sem SQLSTATE. Nesse caso,
+    reconhecemos mensagens do libpq, mantendo um fallback para erros desconhecidos.
+    """
+    codigo = erro.sqlstate
+    mensagem = str(erro).lower()
+    if (codigo or '').startswith('28') or 'password authentication failed' in mensagem:
+        return 'Autenticação recusada. Verifique usuário e senha no Secret DATABASE_URL.'
+    if 'tenant or user not found' in mensagem:
+        return 'Pooler não reconheceu o projeto ou usuário. Revise o Secret DATABASE_URL.'
+    if codigo == '42501':
+        return 'Permissão insuficiente no PostgreSQL. Verifique o papel usado pelo coletor.'
+    if codigo in ('42P01', '42703', '3F000'):
+        return 'Tabela, coluna ou schema ausente. Verifique as migrações do PostgreSQL.'
+    if codigo == '3D000':
+        return 'Banco de dados inexistente. Verifique o nome do banco no Secret DATABASE_URL.'
+    if any(t in mensagem for t in ('could not translate host name', 'name or service not known', 'getaddrinfo', 'temporary failure in name resolution')):
+        return 'Falha de DNS. Verifique o endereço do servidor no Secret DATABASE_URL.'
+    if 'network is unreachable' in mensagem or 'no route to host' in mensagem:
+        return 'Servidor sem rota de rede. Verifique a conectividade IPv4/IPv6 do runner e do endpoint.'
+    if 'timeout' in mensagem or 'timed out' in mensagem:
+        return 'Tempo de conexão esgotado. Verifique disponibilidade do banco e restrições de rede.'
+    if 'connection refused' in mensagem:
+        return 'Conexão recusada. Verifique o servidor, a porta e a disponibilidade do banco.'
+    if 'ssl' in mensagem or 'certificate' in mensagem:
+        return 'Falha de TLS/SSL. Verifique a configuração de conexão e os certificados.'
+    return 'Verifique configuração, disponibilidade, rede e permissões do PostgreSQL.'
+
+
 def conectar_banco() -> psycopg.Connection:
     load_dotenv(BASE_DIR / '.env', override=False)
     url = os.environ.get('DATABASE_URL', '').strip()
@@ -36,6 +67,9 @@ def conectar_banco() -> psycopg.Connection:
         raise ErroBanco('Configure DATABASE_URL no ambiente do backend.')
     try:
         parametros = conninfo_to_dict(url)
+    except (psycopg.Error, ValueError):
+        raise ErroBanco('DATABASE_URL inválida. Revise o formato da conexão no Secret do GitHub.') from None
+    try:
         host = parametros.get('host', '')
         if host not in ('localhost', '127.0.0.1', '::1') and not host.startswith('/'):
             if parametros.get('sslmode') not in ('require', 'verify-ca', 'verify-full'):
@@ -43,8 +77,10 @@ def conectar_banco() -> psycopg.Connection:
         parametros.setdefault('connect_timeout', '15')
         parametros['application_name'] = 'fundos_caixa'
         return psycopg.connect(**parametros, autocommit=True, prepare_threshold=None)
-    except (psycopg.Error, ValueError):
-        raise ErroBanco('Não foi possível conectar ao PostgreSQL. Verifique a configuração e a rede.') from None
+    except psycopg.Error as erro:
+        raise ErroBanco('Não foi possível conectar ao PostgreSQL. ' + diagnostico_banco(erro)) from None
+    except ValueError:
+        raise ErroBanco('Parâmetros de conexão inválidos. Revise DATABASE_URL.') from None
 
 
 @contextmanager
@@ -52,8 +88,8 @@ def operacao_banco():
     try:
         with conectar_banco() as conexao:
             yield conexao
-    except psycopg.Error:
-        raise ErroBanco('A operação no PostgreSQL falhou. Verifique a conexão, o schema e as permissões.') from None
+    except psycopg.Error as erro:
+        raise ErroBanco('A operação no PostgreSQL falhou. ' + diagnostico_banco(erro)) from None
 
 
 def aplicar_schema() -> None:
