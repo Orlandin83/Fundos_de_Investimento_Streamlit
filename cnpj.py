@@ -125,6 +125,23 @@ def carregar_fundos(planilha: Path | None = None) -> pd.DataFrame:
     return fundos[["cnpj", "nome"]].reset_index(drop=True)
 
 
+class ErroCVM(RuntimeError):
+    """Diagnóstico de acesso à fonte pública, sem mensagem bruta do driver."""
+
+
+def _diagnostico_rede(erro: Exception) -> str:
+    if isinstance(erro, urllib.error.HTTPError):
+        return f"HTTP {erro.code}"
+    motivo = erro.reason if isinstance(erro, urllib.error.URLError) else erro
+    if isinstance(motivo, ssl.SSLCertVerificationError):
+        return "falha na verificação do certificado TLS"
+    if isinstance(motivo, TimeoutError):
+        return "tempo de resposta esgotado"
+    if isinstance(motivo, OSError):
+        return f"{type(motivo).__name__} (errno={motivo.errno})"
+    return "falha de rede sem código disponível"
+
+
 def _abrir_url(url: str, tentativas: int = 4, timeout: int = 90):
     cabecalhos = {"User-Agent": "Fundos-CAIXA-COTA/1.0"}
     ultimo_erro: Exception | None = None
@@ -138,9 +155,9 @@ def _abrir_url(url: str, tentativas: int = 4, timeout: int = 90):
             if tentativa == tentativas:
                 break
             espera = 2 ** (tentativa - 1)
-            LOG.warning("Falha ao acessar %s; nova tentativa em %ss", url, espera)
+            LOG.warning("Falha ao acessar %s (%s); nova tentativa em %ss", url, _diagnostico_rede(erro), espera)
             time.sleep(espera)
-    raise RuntimeError(f"Não foi possível acessar {url}: {ultimo_erro}")
+    raise ErroCVM(f"Não foi possível acessar {url} após {tentativas} tentativas: {_diagnostico_rede(ultimo_erro)}") from None
 
 
 def _listar_nomes_zip(url_diretorio: str) -> list[str]:
@@ -385,7 +402,7 @@ def main() -> int:
     except KeyboardInterrupt:
         LOG.warning("Execução interrompida; o progresso concluído foi preservado.")
         return 130
-    except ErroBanco as erro:
+    except (ErroBanco, ErroCVM) as erro:
         LOG.error("A carga não foi concluída: %s", erro)
         return 1
     except Exception as erro:
