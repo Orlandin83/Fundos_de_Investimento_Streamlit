@@ -18,7 +18,10 @@ from psycopg.conninfo import conninfo_to_dict
 
 from analytics import carregar_cotas
 from cnpj import ArquivoCVM, carregar_fundos, criar_parser, executar, processar_arquivo
-from database import aplicar_schema, conectar_banco, listar_fundos, registrar_simulacao, total_simulacoes, upsert_lote
+from database import (
+    aplicar_schema, conectar_banco, consultar_benchmark, listar_fundos,
+    registrar_simulacao, total_simulacoes, upsert_lote,
+)
 
 
 @unittest.skipUnless(os.environ.get('TEST_DATABASE_URL'), 'Defina TEST_DATABASE_URL para PostgreSQL local descartável')
@@ -37,7 +40,7 @@ class PostgreSQLTest(unittest.TestCase):
     def setUp(self):
         self.conexao = conectar_banco()
         self.addCleanup(self.conexao.close)
-        self.conexao.execute('TRUNCATE public.cotas_diarias, public.fundos, public.cargas, public.simulacoes')
+        self.conexao.execute('TRUNCATE public.cotas_diarias, public.fundos, public.cargas, public.simulacoes, public.benchmarks_diarios')
         self.agora = datetime.now(timezone.utc)
         self.cnpj = '00000000000001'
         upsert_lote(self.conexao, 'fundos', [(self.cnpj, 'Fundo teste', self.agora)])
@@ -117,6 +120,18 @@ class PostgreSQLTest(unittest.TestCase):
             list(pool.map(registrar_simulacao, ids * 3))
         self.assertEqual(total_simulacoes(), 5)
 
+    def test_benchmark_upsert_e_consulta_por_periodo(self):
+        registros = [
+            ('CDI', date(2026, 1, 1), .05, 'BCB SGS 12', self.agora),
+            ('CDI', date(2026, 1, 2), .06, 'BCB SGS 12', self.agora),
+            ('Ibovespa', date(2026, 1, 2), 161000., 'Yahoo Finance', self.agora),
+        ]
+        resultado = upsert_lote(self.conexao, 'benchmarks_diarios', registros)
+        self.assertEqual((resultado.inseridas, resultado.atualizadas), (3, 0))
+        serie = consultar_benchmark('CDI', date(2026, 1, 2), date(2026, 1, 3))
+        self.assertEqual(serie.tolist(), [.06])
+        self.assertEqual(str(serie.index.dtype), 'datetime64[us]')
+
     def test_duplicata_entre_lotes_e_idempotencia_do_arquivo(self):
         arquivo = ArquivoCVM('teste.zip', 'https://exemplo.invalid/teste.zip', '2026-01', '2026-01', True)
         colunas = ['cnpj', 'id_subclasse', 'data', 'valor_cota']
@@ -173,4 +188,4 @@ class PostgreSQLTest(unittest.TestCase):
         upsert_lote(self.conexao, 'cotas_diarias', [self.registro()])
         aplicar_schema()
         self.assertEqual(self.conexao.execute('SELECT count(*) FROM public.cotas_diarias').fetchone()[0], 1)
-        self.assertTrue(self.conexao.execute("SELECT bool_and(relrowsecurity) FROM pg_class WHERE oid IN ('public.fundos'::regclass, 'public.cotas_diarias'::regclass, 'public.cargas'::regclass, 'public.simulacoes'::regclass)").fetchone()[0])
+        self.assertTrue(self.conexao.execute("SELECT bool_and(relrowsecurity) FROM pg_class WHERE oid IN ('public.fundos'::regclass, 'public.cotas_diarias'::regclass, 'public.cargas'::regclass, 'public.simulacoes'::regclass, 'public.benchmarks_diarios'::regclass)").fetchone()[0])

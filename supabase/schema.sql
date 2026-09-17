@@ -48,19 +48,31 @@ CREATE TABLE IF NOT EXISTS public.simulacoes (
 );
 CREATE INDEX IF NOT EXISTS simulacoes_criado_em_idx ON public.simulacoes (criado_em);
 
+-- Valores brutos das fontes: taxa diária percentual do CDI e fechamento do Ibovespa.
+CREATE TABLE IF NOT EXISTS public.benchmarks_diarios (
+    benchmark TEXT NOT NULL CHECK (benchmark IN ('CDI', 'Ibovespa')),
+    data DATE NOT NULL,
+    valor DOUBLE PRECISION NOT NULL CHECK (valor >= 0),
+    fonte TEXT NOT NULL,
+    atualizado_em TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (benchmark, data)
+);
+CREATE INDEX IF NOT EXISTS benchmarks_data_idx ON public.benchmarks_diarios (data);
+
 -- Sem políticas públicas: acesso somente pelo backend PostgreSQL autorizado.
 ALTER TABLE public.fundos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cotas_diarias ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cargas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.simulacoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.benchmarks_diarios ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.fundos, public.cotas_diarias, public.cargas,
-    public.fundos_controle, public.simulacoes FROM PUBLIC;
+    public.fundos_controle, public.simulacoes, public.benchmarks_diarios FROM PUBLIC;
 DO $$
 DECLARE papel TEXT;
 BEGIN
     FOREACH papel IN ARRAY ARRAY['anon', 'authenticated'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = papel) THEN
-            EXECUTE format('REVOKE ALL ON public.fundos, public.cotas_diarias, public.cargas, public.fundos_controle, public.simulacoes FROM %I', papel);
+            EXECUTE format('REVOKE ALL ON public.fundos, public.cotas_diarias, public.cargas, public.fundos_controle, public.simulacoes, public.benchmarks_diarios FROM %I', papel);
         END IF;
     END LOOP;
 END $$;

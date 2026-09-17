@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 import yfinance as yf
 from bcb import sgs
+
+from database import (
+    ErroBanco, consultar_benchmark, operacao_banco, ultima_data_benchmark, upsert_lote,
+)
 
 
 BENCHMARK_NENHUM = "Nenhum"
@@ -81,8 +85,8 @@ def _periodos_sgs(inicio: date, fim: date):
         cursor = fim_janela + timedelta(days=1)
 
 
-def carregar_cdi(inicio: date, fim: date) -> pd.Series:
-    """Obtém a taxa CDI diária (SGS 12) e devolve sua evolução base 100."""
+def baixar_taxas_cdi(inicio: date, fim: date) -> pd.Series:
+    """Obtém da fonte a taxa CDI diária percentual, sem acumulação."""
     _validar_periodo(inicio, fim)
     partes: list[pd.Series] = []
     try:
@@ -99,7 +103,15 @@ def carregar_cdi(inicio: date, fim: date) -> pd.Series:
         raise ErroBenchmark(f"Falha ao consultar o CDI no Banco Central: {erro}") from erro
     if not partes:
         raise ErroBenchmark("O Banco Central não retornou dados do CDI para o período.")
-    taxas = pd.concat(partes)
+    return _serie_numerica(pd.concat(partes), BENCHMARK_CDI)
+
+
+def carregar_cdi(inicio: date, fim: date) -> pd.Series:
+    """Lê do PostgreSQL a taxa CDI diária e devolve sua evolução base 100."""
+    _validar_periodo(inicio, fim)
+    taxas = consultar_benchmark(BENCHMARK_CDI, inicio, fim)
+    if taxas.empty:
+        raise ErroBenchmark("O banco não possui dados do CDI para o período.")
     return acumular_taxas_percentuais(taxas, NOMES_SERIES[BENCHMARK_CDI])
 
 
@@ -115,8 +127,8 @@ def _coluna_close(dados: pd.DataFrame) -> pd.Series:
     raise ErroBenchmark("A resposta do Yahoo Finance não contém a coluna 'Close'.")
 
 
-def carregar_ibovespa(inicio: date, fim: date) -> pd.Series:
-    """Obtém o fechamento do Ibovespa e devolve suas variações acumuladas."""
+def baixar_fechamentos_ibovespa(inicio: date, fim: date) -> pd.Series:
+    """Obtém da fonte os fechamentos diários do Ibovespa, sem acumulação."""
     _validar_periodo(inicio, fim)
     try:
         dados = yf.download(
@@ -135,8 +147,17 @@ def carregar_ibovespa(inicio: date, fim: date) -> pd.Series:
         raise ErroBenchmark(f"Falha ao consultar o Ibovespa no Yahoo Finance: {erro}") from erro
     if dados is None or dados.empty:
         raise ErroBenchmark("O Yahoo Finance não retornou dados do Ibovespa para o período.")
+    return _serie_numerica(_coluna_close(dados), BENCHMARK_IBOVESPA)
+
+
+def carregar_ibovespa(inicio: date, fim: date) -> pd.Series:
+    """Lê do PostgreSQL os fechamentos e devolve suas variações acumuladas."""
+    _validar_periodo(inicio, fim)
+    fechamentos = consultar_benchmark(BENCHMARK_IBOVESPA, inicio, fim)
+    if fechamentos.empty:
+        raise ErroBenchmark("O banco não possui dados do Ibovespa para o período.")
     return acumular_variacoes_fechamento(
-        _coluna_close(dados), NOMES_SERIES[BENCHMARK_IBOVESPA]
+        fechamentos, NOMES_SERIES[BENCHMARK_IBOVESPA]
     )
 
 
@@ -149,3 +170,63 @@ def carregar_benchmark(benchmark: str, inicio: date, fim: date) -> pd.Series:
     if benchmark == BENCHMARK_NENHUM:
         return pd.Series(dtype=float, name=BENCHMARK_NENHUM)
     raise ValueError(f"Benchmark desconhecido: {benchmark}")
+
+
+FONTES_REGISTRO = {
+    BENCHMARK_CDI: "BCB SGS 12",
+    BENCHMARK_IBOVESPA: "Yahoo Finance ^BVSP Close",
+}
+
+
+def atualizar_benchmarks(dias_reprocessar: int = 10) -> dict[str, object]:
+    """Atualiza o histórico no PostgreSQL e devolve contagens por benchmark."""
+    if dias_reprocessar < 0:
+        raise ValueError("dias_reprocessar não pode ser negativo.")
+    hoje = date.today()
+    agora = datetime.now(timezone.utc)
+    resultado: dict[str, object] = {}
+    with operacao_banco() as conexao:
+        primeira_cota = conexao.execute(
+            "SELECT MIN(data) FROM public.cotas_diarias"
+        ).fetchone()[0]
+        if primeira_cota is None:
+            raise ErroBenchmark("O banco não possui cotas para definir o início dos benchmarks.")
+        coletores = {
+            BENCHMARK_CDI: baixar_taxas_cdi,
+            BENCHMARK_IBOVESPA: baixar_fechamentos_ibovespa,
+        }
+        for benchmark, coletor in coletores.items():
+            ultima = ultima_data_benchmark(conexao, benchmark)
+            inicio = primeira_cota if ultima is None else max(
+                primeira_cota, ultima - timedelta(days=dias_reprocessar)
+            )
+            serie = coletor(inicio, hoje)
+            fonte = FONTES_REGISTRO[benchmark]
+            registros = (
+                (benchmark, indice.date(), float(valor), fonte, agora)
+                for indice, valor in serie.items()
+            )
+            resultado[benchmark] = upsert_lote(conexao, "benchmarks_diarios", registros)
+    return resultado
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Atualizar CDI e Ibovespa no PostgreSQL.")
+    parser.add_argument("--dias-reprocessar", type=int, default=10)
+    args = parser.parse_args()
+    try:
+        resultados = atualizar_benchmarks(args.dias_reprocessar)
+    except (ErroBanco, ErroBenchmark, ValueError) as erro:
+        parser.exit(1, f"{erro}\n")
+    for benchmark, resultado in resultados.items():
+        print(
+            f"{benchmark}: {resultado.inseridas} inseridos; "
+            f"{resultado.atualizadas} atualizados."
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

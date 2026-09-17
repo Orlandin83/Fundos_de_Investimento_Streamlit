@@ -44,3 +44,8 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python cnpj.py --meses-reprocessar 2
+
+      - name: Atualizar CDI e Ibovespa
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python benchmarks.py --dias-reprocessar 10

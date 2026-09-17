@@ -9,8 +9,9 @@ simulações. Não é necessário criar outro banco/projeto para o contador.
 ```text
 CVM → ZIP/CSV → pandas em lotes → COPY/staging → UPSERT PostgreSQL
 Streamlit → database.py → cotas dos CNPJs/período selecionados → pandas → cálculos
+BCB/Yahoo Finance → benchmarks.py → UPSERT PostgreSQL → Streamlit
 Streamlit → UUID da análise concluída → simulacoes (no mesmo PostgreSQL)
-GitHub Actions → cnpj.py → PostgreSQL (sem commit/push de dados)
+GitHub Actions → cnpj.py + benchmarks.py → PostgreSQL (sem commit/push de dados)
 ```
 
 `analytics.py` preserva as fórmulas financeiras e a otimização existentes.
@@ -29,13 +30,16 @@ idempotente, sem remover dados:
 | `cotas_diarias` | `cnpj TEXT`, `id_subclasse TEXT DEFAULT ''`, `data DATE`, `valor_cota DOUBLE PRECISION`, `arquivo_origem TEXT`, `atualizado_em TIMESTAMPTZ` | `(cnpj, id_subclasse, data)` |
 | `cargas` | `arquivo TEXT`, `url TEXT`, `periodo_inicial TEXT`, `periodo_final TEXT`, `processado_em TIMESTAMPTZ`, `linhas_inseridas BIGINT`, `status TEXT`, `erro TEXT`, `linhas_atualizadas BIGINT DEFAULT 0` | `arquivo` |
 | `simulacoes` | `id UUID`, `criado_em TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP` | `id` |
+| `benchmarks_diarios` | `benchmark TEXT`, `data DATE`, `valor DOUBLE PRECISION`, `fonte TEXT`, `atualizado_em TIMESTAMPTZ` | `(benchmark, data)` |
 | `fundos_controle` | View: `cnpj`, `nome`, `primeira_data_disponivel`, `ultima_data_disponivel`, `quantidade_registros`, `status` | — |
 
-Todas as colunas das três primeiras tabelas são NOT NULL, exceto
+Todas as colunas das tabelas são NOT NULL, exceto
 `cargas.processado_em`, `cargas.linhas_inseridas` e `cargas.erro`.
 Índices adicionais: `(cnpj, data) INCLUDE (valor_cota)`, `(data)` e
 `simulacoes(criado_em)`. As PKs já impõem unicidade; não há UNIQUE redundante.
-O histórico não tem FK para o cadastro; a chave primária impede duplicação de cotas.
+O histórico não tem FK para o cadastro; as chaves primárias impedem duplicação de cotas
+e benchmarks. `benchmarks_diarios.valor` guarda a taxa diária percentual do CDI e o
+fechamento do Ibovespa. A série base 100 é calculada no intervalo escolhido pelo usuário.
 
 `DOUBLE PRECISION` armazena cotas em ponto flutuante de 64 bits, compatível com
 os cálculos NumPy. Patrimônio, captação, resgate e quantidade de cotistas não
@@ -68,7 +72,7 @@ Para separar permissões de operação, execute também
 Ele cria grupos **sem login e sem senha**:
 
 - `fundos_app`: consulta cadastro/cotas e lê/insere eventos do contador;
-- `fundos_coletor`: consulta, insere e atualiza cadastro/cotas/cargas, sem DELETE.
+- `fundos_coletor`: consulta, insere e atualiza cadastro/cotas/cargas/benchmarks, sem DELETE.
 
 Crie usuários PostgreSQL de backend com senha fora do código, conceda o grupo
 correspondente (`GRANT fundos_app TO seu_usuario_app`, por exemplo) e use
@@ -157,7 +161,8 @@ As consultas históricas filtram CNPJ e intervalo e retornam somente `data`,
 limites e cotas expiram em cinco minutos; o de cotas tem limite de 128 entradas.
 O contador tem cache de 60 segundos, invalidado após um novo evento. Dados
 novos aparecem na próxima interação após o TTL; uma tela inativa não se atualiza
-sozinha. O cache de benchmarks existente continua com seis horas.
+sozinha. O cache de benchmarks continua com seis horas. O aplicativo lê CDI e
+Ibovespa do PostgreSQL e não acessa as fontes externas durante a consulta do usuário.
 
 O aplicativo oferece cada combinação de CNPJ e subclasse como uma opção
 independente. É possível selecionar duas subclasses do mesmo CNPJ, comparar
@@ -222,10 +227,11 @@ consumo no painel. Uma indisponibilidade do contador não impede os resultados.
 Se a sessão terminar antes de uma tentativa de gravação bem-sucedida, esse
 evento poderá não ser contabilizado.
 
-## Atualização CVM e GitHub Actions
+## Atualização CVM, benchmarks e GitHub Actions
 
 ```bash
 python cnpj.py --meses-reprocessar 2
+python benchmarks.py --dias-reprocessar 10
 ```
 
 O universo vem de `fundos` no PostgreSQL, inclusive nas execuções locais.
@@ -250,8 +256,11 @@ Uma conexão perdida encerra com erro; uma nova execução retoma pelos controle
 
 No GitHub, configure **Settings → Secrets and variables → Actions → Secrets →
 DATABASE_URL** com a conexão do coletor. Não use Repository Variables para senha.
-O workflow `Atualizar base de fundos` usa apenas `contents: read`, executa testes
-e grava diretamente no PostgreSQL. Não há `git add`, commit ou push de banco.
+O workflow `Atualizar base de fundos` usa apenas `contents: read`, executa testes,
+atualiza as cotas e depois atualiza CDI e Ibovespa no mesmo PostgreSQL. A primeira
+execução dos benchmarks começa na menor data das cotas; as seguintes reprocessam
+dez dias para incorporar correções. Se uma fonte ficar indisponível, os dados já
+gravados permanecem disponíveis no site. Não há `git add`, commit ou push de banco.
 
 Com a conexão configurada, execute **Run workflow** e confira:
 
@@ -267,6 +276,8 @@ publicação CVM. O arquivo pode ter correções legítimas entre duas execuçõ
 SELECT arquivo, status, processado_em, linhas_inseridas, linhas_atualizadas
 FROM public.cargas ORDER BY processado_em DESC LIMIT 10;
 SELECT COUNT(*), MIN(data), MAX(data) FROM public.cotas_diarias;
+SELECT benchmark, COUNT(*), MIN(data), MAX(data)
+FROM public.benchmarks_diarios GROUP BY benchmark ORDER BY benchmark;
 SELECT COUNT(*) FROM public.simulacoes;
 ```
 

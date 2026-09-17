@@ -21,8 +21,14 @@ COLUNAS = {
     'cotas_diarias': ('cnpj', 'id_subclasse', 'data', 'valor_cota', 'arquivo_origem', 'atualizado_em'),
     'cargas': ('arquivo', 'url', 'periodo_inicial', 'periodo_final', 'processado_em',
                'linhas_inseridas', 'status', 'erro', 'linhas_atualizadas'),
+    'benchmarks_diarios': ('benchmark', 'data', 'valor', 'fonte', 'atualizado_em'),
 }
-CHAVES = {'fundos': ('cnpj',), 'cotas_diarias': ('cnpj', 'id_subclasse', 'data'), 'cargas': ('arquivo',)}
+CHAVES = {
+    'fundos': ('cnpj',),
+    'cotas_diarias': ('cnpj', 'id_subclasse', 'data'),
+    'cargas': ('arquivo',),
+    'benchmarks_diarios': ('benchmark', 'data'),
+}
 
 
 class ErroBanco(RuntimeError):
@@ -146,6 +152,26 @@ def limites_do_banco() -> tuple[pd.Timestamp, pd.Timestamp]:
     if inicio is None:
         raise ValueError('O banco ainda não possui cotas diárias.')
     return pd.Timestamp(inicio), pd.Timestamp(fim)
+
+
+def consultar_benchmark(benchmark: str, inicio, fim) -> pd.Series:
+    """Lê os valores brutos de um benchmark no intervalo solicitado."""
+    with operacao_banco() as conexao:
+        dados = consultar_dataframe(conexao, '''
+            SELECT data, valor FROM public.benchmarks_diarios
+            WHERE benchmark = %s AND data BETWEEN %s AND %s ORDER BY data
+        ''', [benchmark, inicio, fim])
+    if dados.empty:
+        return pd.Series(dtype=float, name=benchmark)
+    indice = pd.to_datetime(dados['data']).astype('datetime64[us]')
+    return pd.Series(dados['valor'].to_numpy(dtype=float), index=indice, name=benchmark)
+
+
+def ultima_data_benchmark(conexao, benchmark: str):
+    return conexao.execute(
+        'SELECT MAX(data) FROM public.benchmarks_diarios WHERE benchmark = %s',
+        [benchmark],
+    ).fetchone()[0]
 
 
 def consultar_cotas(cnpjs, inicio, fim) -> pd.DataFrame:
