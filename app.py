@@ -38,10 +38,10 @@ from benchmarks import (
 )
 
 
-CORES = ["#38BDF8", "#FB923C", "#A78BFA", "#34D399", "#F472B6", "#FACC15", "#2DD4BF", "#E879F9", "#A3E635", "#F87171"]
+CORES = ["#38BDF8", "#FB923C", "#34D399", "#A78BFA", "#F472B6", "#FACC15", "#2DD4BF", "#E879F9", "#A3E635", "#F87171"]
 COR_CARTEIRA = "#F472B6"
 COR_BENCHMARK = "#94A3B8"
-COR_PAINEL = "#102B59"
+COR_PAINEL = "#08294E"
 COR_GRADE = "#294875"
 COR_TEXTO = "#F1F5FF"
 COR_TEXTO_SECUNDARIO = "#BDCCE5"
@@ -72,11 +72,11 @@ st.markdown(
     [data-testid="stMainBlockContainer"] { max-width: 1600px; padding-top: 1.2rem; }
     .hero {
         position: relative; overflow: hidden; padding: 1.15rem 1.5rem;
-        border: 1px solid #294875; border-radius: 18px; color: #f1f5ff;
-        background: linear-gradient(125deg, #003DA5 0%, #084CB8 62%, #1769D4 100%);
+        border: 1px solid #294875; border-radius: 12px; color: #f1f5ff;
+        background: linear-gradient(125deg, #08294E 0%, #07376A 62%, #08294E 100%);
         box-shadow: 0 18px 42px rgba(10,13,16,.28); margin-bottom: 1.35rem;
     }
-    .hero::after {
+    .hero::after { display: none;
         content: ""; position: absolute; width: 220px; height: 220px;
         right: -72px; top: -112px; border: 38px solid rgba(255,255,255,.12);
         border-radius: 50%;
@@ -93,6 +93,15 @@ st.markdown(
     h1, h2, h3, h4 { color: #f4f6f6 !important; letter-spacing: -.015em; }
     p, label, [data-testid="stCaptionContainer"] { color: #bdcce5; }
     [data-testid="stWidgetLabel"] p { color: #E2ECFF; }
+    .st-key-painel_alocacao [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] {
+        min-width: 0; width: 100%;
+    }
+    .st-key-painel_alocacao [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] > div:first-child {
+        min-width: 0; overflow: hidden;
+    }
+    .st-key-painel_alocacao [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] p {
+        font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     button[data-baseweb="tab"] { color: #bdcce5; }
     button[data-baseweb="tab"][aria-selected="true"] { color: #79BCFF; }
     [data-baseweb="tab-highlight"] { background-color: #4A99FF; }
@@ -124,13 +133,18 @@ st.markdown(
         [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
         [data-testid="stColumn"] { min-width: 100% !important; flex: 1 1 100% !important; }
     }
+    [data-testid="stVerticalBlockBorderWrapper"] > div,
+    [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][style*="border"] {
+        background: #08294E; border-color: #20517B !important; border-radius: 12px;
+    }
+    [data-testid="stBaseButton-primary"] { background: #087EFF; border-color: #087EFF; }
     hr { border-color: #294875 !important; }
     </style>
     <div class="hero">
       <div class="hero-row">
         <div>
           <h1>Fundos de Investimento</h1>
-          <p>Performance histórica, composição de carteiras e fronteira eficiente.</p>
+          <p>Análise de fundos e construção de carteiras.</p>
         </div>
         <div class="hero-author">Elaborado por:<br><strong>Fabricio Orlandin, CFP®</strong></div>
       </div>
@@ -308,28 +322,32 @@ def distribuir_igualmente(cnpjs: list[str]) -> None:
 
 
 with st.container(border=True):
-    selecionados = st.multiselect(
-        "Pesquise e selecione um ou mais fundos",
-        options=fundos["cnpj"].tolist(),
-        format_func=lambda valor: rotulos[valor],
-        placeholder="Digite parte do nome do fundo…",
-        key="fundos_performance",
-    )
-    benchmark_fundos = st.selectbox(
-        "Benchmark compartilhado",
-        options=OPCOES_BENCHMARK,
-        key="benchmark_fundos",
-        help="O benchmark é exibido como retorno acumulado e não altera os cálculos dos fundos.",
-    )
-    modo_periodo = st.radio(
-        "Período considerado",
-        ["Todo o histórico disponível", "Informar outro período"],
-        horizontal=True,
-        help=(
-            "No histórico completo, um fundo usa sua primeira cota. Com dois ou mais, "
-            "a comparação começa na data inicial do fundo mais novo."
-        ),
-    )
+    filtro_fundos, filtro_benchmark, filtro_periodo = st.columns([2.2, 1, 1.5])
+    with filtro_fundos:
+        selecionados = st.multiselect(
+            "Pesquise e selecione um ou mais fundos",
+            options=fundos["cnpj"].tolist(),
+            format_func=lambda valor: rotulos[valor],
+            placeholder="Digite parte do nome do fundo…",
+            key="fundos_performance",
+        )
+    with filtro_benchmark:
+        benchmark_fundos = st.selectbox(
+            "Benchmark compartilhado",
+            options=OPCOES_BENCHMARK,
+            key="benchmark_fundos",
+            help="O benchmark é exibido como retorno acumulado e não altera os cálculos dos fundos.",
+        )
+    with filtro_periodo:
+        modo_periodo = st.radio(
+            "Período considerado",
+            ["Todo o histórico disponível", "Informar outro período"],
+            horizontal=True,
+            help=(
+                "No histórico completo, um fundo usa sua primeira cota. Com dois ou mais, "
+                "a comparação começa na data inicial do fundo mais novo."
+            ),
+        )
     erro_periodo: str | None = None
     if modo_periodo == "Informar outro período":
         coluna_inicio, coluna_fim = st.columns(2)
@@ -366,7 +384,7 @@ benchmark_carteira = benchmark_fundos
 carteira = selecionados
 with st.container():
     with st.container(border=True, key="painel_alocacao"):
-        st.subheader("Monte sua carteira")
+        st.subheader("Alocação da carteira")
         st.caption("Alocação inicial • histórico sem rebalanceamento")
         st.markdown(
             "**Quer manter um percentual na otimização?** Marque **Travar na otimização** "
@@ -390,7 +408,7 @@ with st.container():
             for campo, cnpj in zip(campos, carteira[inicio_linha:inicio_linha + 3]):
                 with campo:
                     pesos_percentuais[cnpj] = st.number_input(
-                        nome_curto(nomes_por_cnpj[cnpj], 62), min_value=0.0, max_value=100.0,
+                        nomes_por_cnpj[cnpj], min_value=0.0, max_value=100.0,
                         step=0.5, format="%.2f", key=f"peso_{cnpj}", help=rotulos[cnpj],
                     )
                     if st.checkbox(
@@ -415,10 +433,11 @@ with st.container():
             st.warning(f"{'Faltam' if diferenca > 0 else 'Excedem'} {abs(diferenca):.2f}% para fechar 100%.")
 
 with st.container():
-    indicadores = st.container()
-    with st.container():
-        with st.container(border=True):
-            st.subheader("Retorno dos fundos")
+    coluna_fundos, coluna_carteira = st.columns(2, gap="medium", border=True)
+    indicadores = st.container(border=True, key="resumo_alocacoes")
+    with coluna_fundos:
+        with st.container():
+            st.subheader("Rentabilidade dos fundos")
             if not selecionados:
                 st.info("Selecione um fundo para visualizar sua performance. Adicione outros para comparar.")
             else:
@@ -485,9 +504,9 @@ with st.container():
                         )
 
     cotas_carteira = None
-    with st.container():
-        with st.container(border=True):
-            st.subheader("Retorno da carteira")
+    with coluna_carteira:
+        with st.container():
+            st.subheader("Rentabilidade da carteira")
             if not valido:
                 st.info("Defina os pesos acima, totalizando 100%, para visualizar sua carteira.")
             else:
@@ -499,17 +518,7 @@ with st.container():
                     pesos = pd.Series(pesos_percentuais).divide(total_pesos)
                     historico, pesos_dinamicos = historico_carteira_sem_rebalanceamento(cotas_carteira, pesos)
                     rentabilidade = historico.iloc[-1] / 100.0 - 1.0
-                    with indicadores:
-                        k1, k2, k3 = st.columns(3)
-                        k1.metric("Retorno acumulado da carteira", f"{rentabilidade:.2%}")
-                        risco_texto = "—"
-                        if len(cotas_carteira) >= 3:
-                            _, risco_historico = risco_retorno_carteira_estatica(cotas_carteira, pesos)
-                            risco_texto = f"{risco_historico:.2%}"
-                        k2.metric("Risco anualizado • pesos estáticos", risco_texto)
-                        k3.metric("Total alocado", f"{total_pesos:.2f}%")
                     st.info(f"**Período efetivo da carteira: {historico.index.min():%d/%m/%Y} a {historico.index.max():%d/%m/%Y}**")
-                    st.caption("Histórico sem rebalanceamento.")
                     performance_carteira, tracejados, erro_benchmark = incluir_benchmark(
                         historico.to_frame(), benchmark_carteira,
                         historico.index.min().date(), historico.index.max().date(),
@@ -524,6 +533,45 @@ with st.container():
                     with st.expander("Alocação após a variação dos fundos"):
                         st.dataframe(tabela_alocacao(pesos_dinamicos.iloc[-1], nomes_por_cnpj)
                                      .style.format({"Alocação": "{:.2%}"}), hide_index=True, width="stretch")
+    with indicadores:
+        st.subheader("Alocações da carteira")
+        if valido:
+            composicao, metricas = st.columns([1.2, 1.8], gap="large")
+            with composicao:
+                figura_alocacao = go.Figure(go.Pie(
+                    labels=[nomes_por_cnpj[c] for c in carteira],
+                    values=[pesos_percentuais[c] for c in carteira],
+                    hole=.68, sort=False,
+                    marker=dict(colors=[CORES[i % len(CORES)] for i in range(len(carteira))]),
+                    textinfo="percent", textposition="inside",
+                    hovertemplate="%{label}<br>Alocação inicial: %{value:.2f}%<extra></extra>",
+                ))
+                figura_alocacao.update_layout(
+                    height=270, margin=dict(l=10, r=10, t=10, b=10),
+                    paper_bgcolor=COR_PAINEL, font=dict(color=COR_TEXTO_SECUNDARIO),
+                    legend=dict(orientation="h", y=-.1),
+                    annotations=[dict(text="100%", x=.5, y=.5, showarrow=False,
+                                      font=dict(size=24, color=COR_TEXTO))],
+                )
+                st.plotly_chart(figura_alocacao, width="stretch", key="grafico_alocacoes")
+                st.caption("Alocações iniciais • histórico sem rebalanceamento")
+            with metricas:
+                k1, k2, k3 = st.columns(3)
+                retorno_texto, risco_texto = "—", "—"
+                if cotas_carteira is not None:
+                    retorno_texto = f"{rentabilidade:.2%}"
+                    if len(cotas_carteira) >= 3:
+                        _, risco_historico = risco_retorno_carteira_estatica(cotas_carteira, pesos)
+                        risco_texto = f"{risco_historico:.2%}"
+                k1.metric("Retorno no período", retorno_texto)
+                k2.metric("Volatilidade anualizada", risco_texto,
+                          help="Risco calculado com pesos estáticos e covariância dos retornos diários.")
+                k3.metric("Índice de Sharpe", "—", help="Em breve: indicador ainda não calculado.")
+                k3.caption("Em breve")
+        else:
+            st.info("Complete a alocação em 100% para visualizar a composição da carteira.")
+            st.caption("Índice de Sharpe · Em breve")
+    resultado_otimizado = None
     # Fixações podem ser otimizadas antes de preencher os pesos livres.
     if pesos_fixos and not valido and not erro_fixacoes:
         cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True)
@@ -673,99 +721,105 @@ with st.container():
                                 "Por isso, as diversificações testadas se distribuem sobre uma curva, em vez de uma nuvem."
                             )
 
-                    st.markdown("#### Alocações sugeridas por ativo")
-                    st.caption("Compare os pesos da sua carteira com as duas carteiras de referência da fronteira.")
-                    comparacao = pd.DataFrame({
-                        "Fundo": [nomes_por_cnpj[c] for c in carteira],
-                        "Restrição": ["Travado" if c in pesos_fixos else "Livre" for c in carteira],
-                        "Sua carteira": pesos.reindex(carteira).to_numpy() if valido else np.nan,
-                        "Menor risco": fronteira.pesos_minimo_risco.reindex(carteira).to_numpy(),
-                        "Maior retorno": fronteira.pesos_maior_retorno.reindex(carteira).to_numpy(),
-                    })
-                    st.dataframe(
-                        comparacao.style.format({
-                            "Sua carteira": "{:.2%}", "Menor risco": "{:.2%}", "Maior retorno": "{:.2%}",
-                        }, na_rep="—"),
-                        column_config={"Fundo": st.column_config.TextColumn("Fundo", width="large")},
-                        hide_index=True, width="stretch", height="content",
-                    )
-                    coluna_minimo, coluna_maximo = st.columns(2)
-                    with coluna_minimo:
-                        st.markdown("#### Carteira de menor risco")
-                        st.metric("Risco anualizado", f"{fronteira.risco_minimo:.2%}")
-                        st.metric("Retorno esperado", f"{fronteira.retorno_minimo_risco:.2%}")
-                    with coluna_maximo:
-                        st.markdown("#### Carteira de maior retorno na fronteira")
-                        st.metric("Retorno esperado", f"{fronteira.retorno_maximo:.2%}")
-                        st.metric("Risco anualizado", f"{fronteira.risco_maximo_retorno:.2%}")
+                    resultado_otimizado = fronteira
 
-                    st.subheader("Desempenho histórico das carteiras otimizadas")
-                    st.info(
-                        f"**Período efetivo: {cotas_carteira.index.min():%d/%m/%Y} "
-                        f"a {cotas_carteira.index.max():%d/%m/%Y}**"
-                    )
-                    historico_minimo, _ = historico_carteira_sem_rebalanceamento(
-                        cotas_carteira, fronteira.pesos_minimo_risco
-                    )
-                    historico_maximo, _ = historico_carteira_sem_rebalanceamento(
-                        cotas_carteira, fronteira.pesos_maior_retorno
-                    )
-                    historicos_otimizados = pd.concat([
-                        historico_minimo.rename("Menor risco"),
-                        historico_maximo.rename("Maior retorno esperado"),
-                    ], axis="columns", sort=False)
-                    desempenho_otimizado, tracejados_otimizados, erro_benchmark_otimizado = incluir_benchmark(
-                        historicos_otimizados, benchmark_carteira,
-                        cotas_carteira.index.min().date(), cotas_carteira.index.max().date(),
-                    )
-                    if erro_benchmark_otimizado:
-                        st.warning(
-                            "Não foi possível carregar o benchmark. As carteiras otimizadas "
-                            f"continuam disponíveis. Detalhe: {erro_benchmark_otimizado}"
-                        )
-                    st.plotly_chart(
-                        grafico_linhas(
-                            retorno_acumulado_base_100(desempenho_otimizado),
-                            "Rentabilidade acumulada das carteiras otimizadas",
-                            "Retorno acumulado", tracejados_otimizados,
-                            {
-                                "Menor risco": "#34D399",
-                                "Maior retorno esperado": "#FB923C",
-                                **{nome: COR_BENCHMARK for nome in NOMES_SERIES.values()},
-                            },
-                        ),
-                        width="stretch",
-                    )
-                    st.caption(
-                        "Simulação retrospectiva: os pesos foram calculados usando o próprio período exibido. "
-                        "Os pesos otimizados, incluindo os travados, são as alocações iniciais, sem rebalanceamento; "
-                        "os percentuais variam ao longo do histórico. "
-                        "Maior retorno esperado não significa necessariamente maior retorno acumulado."
-                    )
+    if resultado_otimizado is not None:
+        with st.container(border=True, key="resultado_carteiras"):
+            st.markdown("#### Alocações das carteiras otimizadas")
+            st.caption("Compare os pesos da sua carteira com as duas carteiras de referência da fronteira.")
+            comparacao = pd.DataFrame({
+                "Fundo": [nomes_por_cnpj[c] for c in carteira],
+                "Restrição": ["Travado" if c in pesos_fixos else "Livre" for c in carteira],
+                "Sua carteira": pesos.reindex(carteira).to_numpy() if valido else np.nan,
+                "Menor risco": fronteira.pesos_minimo_risco.reindex(carteira).to_numpy(),
+                "Maior retorno": fronteira.pesos_maior_retorno.reindex(carteira).to_numpy(),
+            })
+            st.dataframe(
+                comparacao.style.format({
+                    "Sua carteira": "{:.2%}", "Menor risco": "{:.2%}", "Maior retorno": "{:.2%}",
+                }, na_rep="—"),
+                column_config={"Fundo": st.column_config.TextColumn("Fundo", width="large")},
+                hide_index=True, width="stretch", height="content",
+            )
+            coluna_minimo, coluna_maximo = st.columns(2)
+            with coluna_minimo:
+                st.markdown("#### Carteira de menor risco")
+                st.metric("Risco anualizado", f"{fronteira.risco_minimo:.2%}")
+                st.metric("Retorno esperado", f"{fronteira.retorno_minimo_risco:.2%}")
+            with coluna_maximo:
+                st.markdown("#### Carteira de maior retorno na fronteira")
+                st.metric("Retorno esperado", f"{fronteira.retorno_maximo:.2%}")
+                st.metric("Risco anualizado", f"{fronteira.risco_maximo_retorno:.2%}")
 
-                    with st.expander("Metodologia e limitações"):
-                        st.markdown(
-                            f"""
-                            <div class="disclaimer">
-                            <strong>Nota metodológica e disclaimer:</strong> o retorno esperado é a
-                            média dos retornos diários simples observados na janela, anualizada por
-                            252 dias úteis. O risco é o desvio-padrão da carteira calculado com a
-                            matriz de covariância e anualizado por √252. As estimativas são muito
-                            sensíveis ao período escolhido. Resultados passados não representam
-                            previsão ou garantia de rentabilidade futura e esta ferramenta não
-                            constitui recomendação de investimento. A fronteira considera pesos
-                            estáticos, sem venda a descoberto, e alocação mínima de
-                            {ALOCACAO_MINIMA_FRONTEIRA:.0%} por fundo; o histórico da carteira é uma
-                            simulação sem rebalanceamento. Mínimo de {MINIMO_OBSERVACOES}
-                            retornos diários comuns.
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
+            st.subheader("Resultado das carteiras")
+            st.caption("Menor volatilidade × maior retorno esperado")
+            st.info(
+                f"**Período efetivo: {cotas_carteira.index.min():%d/%m/%Y} "
+                f"a {cotas_carteira.index.max():%d/%m/%Y}**"
+            )
+            historico_minimo, _ = historico_carteira_sem_rebalanceamento(
+                cotas_carteira, fronteira.pesos_minimo_risco
+            )
+            historico_maximo, _ = historico_carteira_sem_rebalanceamento(
+                cotas_carteira, fronteira.pesos_maior_retorno
+            )
+            historicos_otimizados = pd.concat([
+                historico_minimo.rename("Menor risco"),
+                historico_maximo.rename("Maior retorno esperado"),
+            ], axis="columns", sort=False)
+            desempenho_otimizado, tracejados_otimizados, erro_benchmark_otimizado = incluir_benchmark(
+                historicos_otimizados, benchmark_carteira,
+                cotas_carteira.index.min().date(), cotas_carteira.index.max().date(),
+            )
+            if erro_benchmark_otimizado:
+                st.warning(
+                    "Não foi possível carregar o benchmark. As carteiras otimizadas "
+                    f"continuam disponíveis. Detalhe: {erro_benchmark_otimizado}"
+                )
+            st.plotly_chart(
+                grafico_linhas(
+                    retorno_acumulado_base_100(desempenho_otimizado),
+                    "Rentabilidade acumulada das carteiras otimizadas",
+                    "Retorno acumulado", tracejados_otimizados,
+                    {
+                        "Menor risco": "#34D399",
+                        "Maior retorno esperado": "#FB923C",
+                        **{nome: COR_BENCHMARK for nome in NOMES_SERIES.values()},
+                    },
+                ),
+                width="stretch",
+            )
+            st.caption(
+                "Simulação retrospectiva: os pesos foram calculados usando o próprio período exibido. "
+                "Os pesos otimizados, incluindo os travados, são as alocações iniciais, sem rebalanceamento; "
+                "os percentuais variam ao longo do histórico. "
+                "Maior retorno esperado não significa necessariamente maior retorno acumulado."
+            )
+
+            with st.expander("Metodologia e limitações"):
+                st.markdown(
+                    f"""
+                    <div class="disclaimer">
+                    <strong>Nota metodológica e disclaimer:</strong> o retorno esperado é a
+                    média dos retornos diários simples observados na janela, anualizada por
+                    252 dias úteis. O risco é o desvio-padrão da carteira calculado com a
+                    matriz de covariância e anualizado por √252. As estimativas são muito
+                    sensíveis ao período escolhido. Resultados passados não representam
+                    previsão ou garantia de rentabilidade futura e esta ferramenta não
+                    constitui recomendação de investimento. A fronteira considera pesos
+                    estáticos, sem venda a descoberto, e alocação mínima de
+                    {ALOCACAO_MINIMA_FRONTEIRA:.0%} por fundo; o histórico da carteira é uma
+                    simulação sem rebalanceamento. Mínimo de {MINIMO_OBSERVACOES}
+                    retornos diários comuns.
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 st.markdown(
     f"""
     <div class="fontes-rodape">
+    <strong>Elaborado por Fabricio Orlandin, CFP®</strong><br><br>
     <strong>Fontes de dados:</strong><br>
     Fundos de investimento: Informe Diário — Portal de Dados Abertos CVM.<br>
     {FONTES_BENCHMARK['CDI']}<br>

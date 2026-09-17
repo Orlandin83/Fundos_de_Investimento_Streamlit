@@ -67,7 +67,12 @@ class DashboardTest(unittest.TestCase):
             app.multiselect[0].set_value(['a', 'b', 'c']).run(timeout=30)
             self.assertFalse(app.exception)
             self.assertAlmostEqual(sum(n.value for n in app.number_input), 100)
-            self.assertEqual(len(app.get('plotly_chart')), 4)
+            self.assertEqual(len(app.get('plotly_chart')), 5)
+            rosca = json.loads(app.get('plotly_chart')[2].proto.spec)
+            self.assertEqual(rosca['data'][0]['type'], 'pie')
+            self.assertAlmostEqual(sum(rosca['data'][0]['values']), 100)
+            self.assertTrue(any(m.label == 'Índice de Sharpe' and m.value == '—' for m in app.metric))
+            self.assertTrue(any('Fabricio Orlandin, CFP®' in m.value for m in app.markdown))
             app.selectbox[0].set_value('CDI').run(timeout=30)
             self.assertFalse(app.exception)
             grafico = json.loads(app.get('plotly_chart')[-1].proto.spec)
@@ -84,7 +89,7 @@ class DashboardTest(unittest.TestCase):
             app.button[0].click().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertEqual([n.value for n in app.number_input], [33.34, 33.33, 33.33])
-            self.assertEqual(len(app.get('plotly_chart')), 4)
+            self.assertEqual(len(app.get('plotly_chart')), 5)
             # Otimiza com 15% travados mesmo antes de completar os pesos livres.
             app.number_input[0].set_value(15).run(timeout=30)
             app.checkbox(key='fixar_a').check().run(timeout=30)
@@ -96,7 +101,7 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(tabela.iloc[0]['Restrição'], 'Travado')
             app.button[0].click().run(timeout=30)
             self.assertEqual([n.value for n in app.number_input], [15, 42.5, 42.5])
-            self.assertEqual(len(app.get('plotly_chart')), 4)
+            self.assertEqual(len(app.get('plotly_chart')), 5)
             app.checkbox(key='fixar_b').check().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertTrue(any('única carteira' in i.value for i in app.info))
@@ -113,7 +118,7 @@ class DashboardTest(unittest.TestCase):
             app.button[0].click().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertEqual(app.number_input[0].value, 100)
-            self.assertEqual(len(app.get('plotly_chart')), 2)
+            self.assertEqual(len(app.get('plotly_chart')), 3)
 
 
 if __name__ == '__main__':

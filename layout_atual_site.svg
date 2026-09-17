@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1900" viewBox="0 0 1440 1900" role="img" aria-labelledby="title desc">
+  <title id="title">Layout atual do site Fundos de Investimento</title>
+  <desc id="desc">Reprodução vetorial da tela inicial atual em desktop, com cabeçalho, filtros, painel de carteira e áreas de resultados.</desc>
+  <defs>
+    <radialGradient id="pageGlow" cx="12%" cy="0%" r="58%">
+      <stop offset="0" stop-color="#003DA5" stop-opacity=".42"/>
+      <stop offset=".58" stop-color="#071A38" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#003DA5"/>
+      <stop offset=".62" stop-color="#084CB8"/>
+      <stop offset="1" stop-color="#1769D4"/>
+    </linearGradient>
+    <linearGradient id="metric" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#123570"/>
+      <stop offset="1" stop-color="#102B59"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="14" stdDeviation="20" flood-color="#020817" flood-opacity=".34"/>
+    </filter>
+    <style>
+      text { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+      .h1 { fill:#F4F6F6; font-size:31px; font-weight:700; letter-spacing:-.7px; }
+      .h2 { fill:#F4F6F6; font-size:23px; font-weight:650; letter-spacing:-.3px; }
+      .label { fill:#E2ECFF; font-size:14px; font-weight:600; }
+      .body { fill:#BDCCE5; font-size:14px; }
+      .small { fill:#A2B8DA; font-size:12px; }
+      .input { fill:#102B59; stroke:#42649A; stroke-width:1; }
+      .panel { fill:#0B234B; stroke:#294875; stroke-width:1; }
+      .info { fill:#102B59; stroke:#294875; stroke-width:1; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="1900" fill="#071A38"/>
+  <rect width="1440" height="1900" fill="url(#pageGlow)"/>
+  <rect width="1440" height="54" fill="#071A38" opacity=".95"/>
+  <circle cx="1360" cy="27" r="3" fill="#BDCCE5"/><circle cx="1371" cy="27" r="3" fill="#BDCCE5"/><circle cx="1382" cy="27" r="3" fill="#BDCCE5"/>
+
+  <g transform="translate(90 78)">
+    <rect width="1260" height="146" rx="18" fill="url(#hero)" stroke="#294875" filter="url(#shadow)"/>
+    <circle cx="1247" cy="-22" r="111" fill="none" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="38"/>
+    <text x="28" y="58" class="h1">Fundos de Investimento</text>
+    <text x="28" y="94" class="body" font-size="16">Performance histórica, composição de carteiras e fronteira eficiente.</text>
+    <text x="1205" y="52" text-anchor="end" class="body">Elaborado por:</text>
+    <text x="1205" y="78" text-anchor="end" fill="#79BCFF" font-size="15" font-weight="700">Fabricio Orlandin, CFP®</text>
+  </g>
+
+  <!-- Filtros -->
+  <g transform="translate(90 250)">
+    <rect width="1260" height="340" rx="12" class="panel"/>
+    <text x="24" y="40" class="label">Pesquise e selecione um ou mais fundos</text>
+    <rect x="24" y="56" width="1212" height="48" rx="8" class="input"/>
+    <text x="42" y="86" class="body">Digite parte do nome do fundo…</text>
+    <path d="M1205 77l7 7 7-7" fill="none" stroke="#A2B8DA" stroke-width="2"/>
+
+    <text x="24" y="142" class="label">Benchmark compartilhado</text>
+    <circle cx="230" cy="137" r="9" fill="none" stroke="#A2B8DA"/><text x="230" y="141" text-anchor="middle" class="small">?</text>
+    <rect x="24" y="158" width="1212" height="48" rx="8" class="input"/>
+    <text x="42" y="188" fill="#F1F5FF" font-size="14">Nenhum</text>
+    <path d="M1205 179l7 7 7-7" fill="none" stroke="#A2B8DA" stroke-width="2"/>
+
+    <text x="24" y="244" class="label">Período considerado</text>
+    <circle cx="24" cy="274" r="9" fill="#071A38" stroke="#4A99FF" stroke-width="2"/><circle cx="24" cy="274" r="4" fill="#4A99FF"/>
+    <text x="42" y="279" class="body">Todo o histórico disponível</text>
+    <circle cx="265" cy="274" r="9" fill="#071A38" stroke="#647FA8" stroke-width="2"/>
+    <text x="283" y="279" class="body">Informar outro período</text>
+    <text x="24" y="318" class="small">Base atualizada até 14/09/2026. Se uma data informada não possuir cota, será usada a observação</text>
+    <text x="24" y="335" class="small">disponível mais próxima dentro do período. Fonte: Informe Diário — Portal de Dados Abertos CVM.</text>
+  </g>
+
+  <!-- Carteira -->
+  <g transform="translate(90 616)">
+    <rect width="1260" height="290" rx="12" class="panel"/>
+    <text x="24" y="43" class="h2">Monte sua carteira</text>
+    <text x="24" y="69" class="small">Alocação inicial • histórico sem rebalanceamento</text>
+    <text x="24" y="106" fill="#F1F5FF" font-size="14" font-weight="700">Quer manter um percentual na otimização?</text>
+    <text x="324" y="106" class="body">Marque “Travar na otimização” nos fundos desejados. O sistema calcula como distribuir o restante.</text>
+    <rect x="24" y="128" width="174" height="44" rx="8" fill="#1B5FBF" opacity=".55"/>
+    <text x="111" y="155" text-anchor="middle" fill="#8FAFD8" font-size="14" font-weight="600">Distribuir igualmente</text>
+    <rect x="24" y="194" width="1212" height="58" rx="8" class="info"/>
+    <circle cx="50" cy="223" r="10" fill="none" stroke="#79BCFF" stroke-width="2"/><text x="50" y="228" text-anchor="middle" fill="#79BCFF" font-size="14" font-weight="700">i</text>
+    <text x="72" y="228" class="body">Selecione os fundos acima para definir os pesos.</text>
+    <text x="24" y="276" class="small">Total alocado: 0,00%</text>
+  </g>
+
+  <!-- Resultados vazios -->
+  <g transform="translate(90 932)">
+    <rect width="1260" height="224" rx="12" class="panel"/>
+    <text x="24" y="45" class="h2">Retorno dos fundos</text>
+    <rect x="24" y="72" width="1212" height="70" rx="8" class="info"/>
+    <circle cx="51" cy="107" r="10" fill="none" stroke="#79BCFF" stroke-width="2"/><text x="51" y="112" text-anchor="middle" fill="#79BCFF" font-size="14" font-weight="700">i</text>
+    <text x="74" y="103" class="body">Selecione um fundo para visualizar sua performance.</text>
+    <text x="74" y="124" class="body">Adicione outros para comparar.</text>
+  </g>
+
+  <g transform="translate(90 1182)">
+    <rect width="1260" height="220" rx="12" class="panel"/>
+    <text x="24" y="45" class="h2">Retorno da carteira</text>
+    <rect x="24" y="72" width="1212" height="70" rx="8" class="info"/>
+    <circle cx="51" cy="107" r="10" fill="none" stroke="#79BCFF" stroke-width="2"/><text x="51" y="112" text-anchor="middle" fill="#79BCFF" font-size="14" font-weight="700">i</text>
+    <text x="74" y="112" class="body">Defina os pesos acima, totalizando 100%, para visualizar sua carteira.</text>
+  </g>
+
+  <g transform="translate(90 1428)">
+    <rect width="1260" height="220" rx="12" class="panel"/>
+    <text x="24" y="45" class="h2">Fronteira eficiente</text>
+    <rect x="24" y="72" width="1212" height="70" rx="8" class="info"/>
+    <circle cx="51" cy="107" r="10" fill="none" stroke="#79BCFF" stroke-width="2"/><text x="51" y="112" text-anchor="middle" fill="#79BCFF" font-size="14" font-weight="700">i</text>
+    <text x="74" y="112" class="body">Selecione pelo menos dois fundos e complete a alocação para analisar a fronteira.</text>
+  </g>
+
+  <!-- Rodapé -->
+  <g transform="translate(90 1682)">
+    <line x1="0" y1="0" x2="1260" y2="0" stroke="#294875"/>
+    <text x="0" y="34" fill="#BDCCE5" font-size="12" font-weight="700">Fontes de dados:</text>
+    <text x="0" y="56" class="small">Fundos de investimento: Informe Diário — Portal de Dados Abertos CVM.</text>
+    <text x="0" y="76" class="small">CDI: SGS 12 — Banco Central do Brasil.</text>
+    <text x="0" y="96" class="small">Ibovespa (^BVSP): Yahoo Finance, coluna Close.</text>
+    <text x="0" y="130" class="small">Simulações de carteira concluídas no site: —</text>
+  </g>
+
+  <g transform="translate(1110 1838)">
+    <rect width="240" height="34" rx="17" fill="#102B59" stroke="#294875"/>
+    <circle cx="18" cy="17" r="5" fill="#34D399"/>
+    <text x="32" y="22" class="small">SVG editável • tela inicial desktop</text>
+  </g>
+</svg>
