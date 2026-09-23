@@ -19,6 +19,9 @@ from analytics import (
     ALOCACAO_MINIMA_FRONTEIRA,
     MINIMO_OBSERVACOES,
     calcular_fronteira_eficiente,
+    calcular_sharpe,
+    calcular_sharpe_carteira_estatica,
+    calcular_maior_sharpe_na_fronteira,
     validar_alocacoes_fixas,
     carregar_cotas,
     historico_carteira_sem_rebalanceamento,
@@ -29,6 +32,7 @@ from analytics import (
     risco_retorno_carteira_estatica,
 )
 from benchmarks import (
+    BENCHMARK_CDI,
     BENCHMARK_NENHUM,
     FONTES_BENCHMARK,
     NOMES_SERIES,
@@ -198,9 +202,12 @@ def grafico_linhas(
     longos = dados.rename_axis("Data").reset_index().melt(
         id_vars="Data", var_name="Série", value_name=eixo_y
     )
+    # Evita a troca automática para WebGL acima de 1.000 pontos, que pode
+    # deixar as linhas invisíveis dependendo do navegador e da seleção.
     figura = px.line(
         longos, x="Data", y=eixo_y, color="Série", title=titulo,
         color_discrete_sequence=CORES, color_discrete_map=cores_series or {},
+        render_mode="svg",
     )
     figura.update_layout(
         hovermode="x unified", legend_title_text="", height=420,
@@ -557,21 +564,36 @@ with st.container():
                 st.caption("Alocações iniciais • histórico sem rebalanceamento")
             with metricas:
                 k1, k2, k3 = st.columns(3)
-                retorno_texto, risco_texto = "—", "—"
+                retorno_texto, risco_texto, sharpe_texto = "—", "—", "—"
+                motivo_sharpe = "Não há histórico suficiente da carteira."
                 if cotas_carteira is not None:
                     retorno_texto = f"{rentabilidade:.2%}"
                     if len(cotas_carteira) >= 3:
                         _, risco_historico = risco_retorno_carteira_estatica(cotas_carteira, pesos)
                         risco_texto = f"{risco_historico:.2%}"
+                    try:
+                        cdi_sharpe = obter_benchmark(
+                            BENCHMARK_CDI, historico.index.min().date(), historico.index.max().date()
+                        )
+                        sharpe_texto = f"{calcular_sharpe(historico, cdi_sharpe):.2f}"
+                        motivo_sharpe = None
+                    except (ErroBanco, ErroBenchmark, ValueError) as erro:
+                        motivo_sharpe = str(erro)
                 k1.metric("Retorno no período", retorno_texto)
                 k2.metric("Volatilidade anualizada", risco_texto,
                           help="Risco calculado com pesos estáticos e covariância dos retornos diários.")
-                k3.metric("Índice de Sharpe", "—", help="Em breve: indicador ainda não calculado.")
-                k3.caption("Em breve")
+                k3.metric("Índice de Sharpe", sharpe_texto, help=(
+                    "Sharpe histórico anualizado: média dos excessos de retorno sobre o CDI "
+                    "dividida pelo desvio-padrão amostral desses excessos, multiplicada por √252. "
+                    "Usa a carteira sem rebalanceamento e ao menos 60 retornos. "
+                    "Nas lacunas de cotas, acumula o CDI e ajusta a anualização pela duração média "
+                    "dos intervalos. A anualização é aproximada e pressupõe ausência de autocorrelação."
+                ))
+                k3.caption(f"Sharpe indisponível: {motivo_sharpe}" if motivo_sharpe else "Anualizado · referência CDI")
         else:
             st.info("Complete a alocação em 100% para visualizar a composição da carteira.")
-            st.caption("Índice de Sharpe · Em breve")
     resultado_otimizado = None
+    maior_sharpe = None
     # Fixações podem ser otimizadas antes de preencher os pesos livres.
     if pesos_fixos and not valido and not erro_fixacoes:
         cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True)
@@ -608,6 +630,15 @@ with st.container():
                 except (ValueError, RuntimeError) as erro:
                     st.warning(str(erro))
                 else:
+                    try:
+                        cdi_fronteira = obter_benchmark(
+                            BENCHMARK_CDI, cotas_carteira.index.min().date(), cotas_carteira.index.max().date()
+                        )
+                        maior_sharpe = calcular_maior_sharpe_na_fronteira(
+                            cotas_carteira, cdi_fronteira, fronteira, pesos_fixos=pesos_fixos
+                        )
+                    except (ErroBanco, ErroBenchmark, ValueError, RuntimeError) as erro:
+                        st.warning(f"Carteira de maior Sharpe indisponível: {erro}")
                     try:
                         if contar_analise(cotas_carteira, pesos, st.session_state, pesos_fixos=pesos_fixos):
                             obter_total_simulacoes.clear()
@@ -680,6 +711,15 @@ with st.container():
                         ),
                         hovertemplate="Maior retorno<br>Risco: %{x:.2%}<br>Retorno: %{y:.2%}<extra></extra>",
                     ))
+                    if maior_sharpe is not None:
+                        figura.add_trace(go.Scatter(
+                            x=[maior_sharpe.risco], y=[maior_sharpe.retorno],
+                            mode="markers", name="Maior Sharpe",
+                            marker=dict(size=10, color="#A78BFA", symbol="circle",
+                                        line=dict(color=COR_TEXTO, width=1.5)),
+                            hovertemplate=(f"Maior Sharpe: {maior_sharpe.sharpe:.2f}<br>"
+                                           "Risco: %{x:.2%}<br>Retorno: %{y:.2%}<extra></extra>"),
+                        ))
                     if valido:
                         figura.add_trace(go.Scatter(
                             x=[risco_usuario], y=[retorno_usuario], mode="markers",
@@ -726,33 +766,53 @@ with st.container():
     if resultado_otimizado is not None:
         with st.container(border=True, key="resultado_carteiras"):
             st.markdown("#### Alocações das carteiras otimizadas")
-            st.caption("Compare os pesos da sua carteira com as duas carteiras de referência da fronteira.")
+            st.caption("Compare os pesos da sua carteira com as carteiras de menor risco, maior retorno e maior Sharpe da fronteira.")
             comparacao = pd.DataFrame({
                 "Fundo": [nomes_por_cnpj[c] for c in carteira],
                 "Restrição": ["Travado" if c in pesos_fixos else "Livre" for c in carteira],
                 "Sua carteira": pesos.reindex(carteira).to_numpy() if valido else np.nan,
                 "Menor risco": fronteira.pesos_minimo_risco.reindex(carteira).to_numpy(),
                 "Maior retorno": fronteira.pesos_maior_retorno.reindex(carteira).to_numpy(),
+                "Maior Sharpe": maior_sharpe.pesos.reindex(carteira).to_numpy() if maior_sharpe is not None else np.nan,
             })
             st.dataframe(
                 comparacao.style.format({
                     "Sua carteira": "{:.2%}", "Menor risco": "{:.2%}", "Maior retorno": "{:.2%}",
+                    "Maior Sharpe": "{:.2%}",
                 }, na_rep="—"),
                 column_config={"Fundo": st.column_config.TextColumn("Fundo", width="large")},
                 hide_index=True, width="stretch", height="content",
             )
-            coluna_minimo, coluna_maximo = st.columns(2)
+            coluna_minimo, coluna_maximo, coluna_sharpe = st.columns(3)
+            sharpes_resumo = []
+            for pesos_resumo in (fronteira.pesos_minimo_risco, fronteira.pesos_maior_retorno):
+                try:
+                    cdi_resumo = obter_benchmark(
+                        BENCHMARK_CDI, cotas_carteira.index.min().date(), cotas_carteira.index.max().date()
+                    )
+                    valor = calcular_sharpe_carteira_estatica(cotas_carteira, pesos_resumo, cdi_resumo)
+                    sharpes_resumo.append((f"{valor:.2f}", "Sharpe anualizado contra o CDI, com pesos estáticos."))
+                except (ErroBanco, ErroBenchmark, ValueError) as erro:
+                    sharpes_resumo.append(("—", f"Sharpe indisponível: {erro}"))
             with coluna_minimo:
                 st.markdown("#### Carteira de menor risco")
-                st.metric("Risco anualizado", f"{fronteira.risco_minimo:.2%}")
+                st.metric("Sharpe anualizado (CDI)", sharpes_resumo[0][0], help=sharpes_resumo[0][1])
                 st.metric("Retorno esperado", f"{fronteira.retorno_minimo_risco:.2%}")
+                st.metric("Risco anualizado", f"{fronteira.risco_minimo:.2%}")
             with coluna_maximo:
                 st.markdown("#### Carteira de maior retorno na fronteira")
+                st.metric("Sharpe anualizado (CDI)", sharpes_resumo[1][0], help=sharpes_resumo[1][1])
                 st.metric("Retorno esperado", f"{fronteira.retorno_maximo:.2%}")
                 st.metric("Risco anualizado", f"{fronteira.risco_maximo_retorno:.2%}")
+            with coluna_sharpe:
+                st.markdown("#### Carteira de maior Sharpe na fronteira")
+                st.metric("Sharpe anualizado (CDI)", f"{maior_sharpe.sharpe:.2f}" if maior_sharpe is not None else "—",
+                          help="Sharpe anualizado contra o CDI, com pesos estáticos. Máximo no trecho eficiente da fronteira.")
+                st.metric("Retorno esperado", f"{maior_sharpe.retorno:.2%}" if maior_sharpe is not None else "—")
+                st.metric("Risco anualizado", f"{maior_sharpe.risco:.2%}" if maior_sharpe is not None else "—")
 
             st.subheader("Resultado das carteiras")
-            st.caption("Menor volatilidade × maior retorno esperado")
+            st.caption("Sua carteira · menor risco · maior retorno esperado · maior Sharpe · benchmark selecionado")
             st.info(
                 f"**Período efetivo: {cotas_carteira.index.min():%d/%m/%Y} "
                 f"a {cotas_carteira.index.max():%d/%m/%Y}**"
@@ -763,10 +823,17 @@ with st.container():
             historico_maximo, _ = historico_carteira_sem_rebalanceamento(
                 cotas_carteira, fronteira.pesos_maior_retorno
             )
-            historicos_otimizados = pd.concat([
+            series_comparacao = [
                 historico_minimo.rename("Menor risco"),
                 historico_maximo.rename("Maior retorno esperado"),
-            ], axis="columns", sort=False)
+            ]
+            if valido:
+                historico_usuario, _ = historico_carteira_sem_rebalanceamento(cotas_carteira, pesos)
+                series_comparacao.append(historico_usuario.rename("Sua carteira"))
+            if maior_sharpe is not None:
+                historico_sharpe, _ = historico_carteira_sem_rebalanceamento(cotas_carteira, maior_sharpe.pesos)
+                series_comparacao.append(historico_sharpe.rename("Maior Sharpe"))
+            historicos_otimizados = pd.concat(series_comparacao, axis="columns", sort=False)
             desempenho_otimizado, tracejados_otimizados, erro_benchmark_otimizado = incluir_benchmark(
                 historicos_otimizados, benchmark_carteira,
                 cotas_carteira.index.min().date(), cotas_carteira.index.max().date(),
@@ -779,11 +846,13 @@ with st.container():
             st.plotly_chart(
                 grafico_linhas(
                     retorno_acumulado_base_100(desempenho_otimizado),
-                    "Rentabilidade acumulada das carteiras otimizadas",
+                    "Rentabilidade acumulada das carteiras",
                     "Retorno acumulado", tracejados_otimizados,
                     {
                         "Menor risco": "#34D399",
                         "Maior retorno esperado": "#FB923C",
+                        "Sua carteira": COR_CARTEIRA,
+                        "Maior Sharpe": "#A78BFA",
                         **{nome: COR_BENCHMARK for nome in NOMES_SERIES.values()},
                     },
                 ),
@@ -794,6 +863,12 @@ with st.container():
                 "Os pesos otimizados, incluindo os travados, são as alocações iniciais, sem rebalanceamento; "
                 "os percentuais variam ao longo do histórico. "
                 "Maior retorno esperado não significa necessariamente maior retorno acumulado."
+            )
+            st.caption(
+                "A carteira de maior Sharpe maximiza o índice contra o CDI no trecho eficiente, "
+                "com pesos estáticos e as mesmas travas. O Sharpe do histórico sem rebalanceamento "
+                "pode diferir do índice otimizado. Se todos os índices forem negativos, "
+                "é escolhido o maior (menos negativo) nesse trecho."
             )
 
             with st.expander("Metodologia e limitações"):

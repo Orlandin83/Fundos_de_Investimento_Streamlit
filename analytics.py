@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 
 from database import consultar_cotas, limites_do_banco, listar_fundos
 
@@ -14,6 +14,7 @@ from database import consultar_cotas, limites_do_banco, listar_fundos
 DIAS_UTEIS_ANO = 252
 MINIMO_OBSERVACOES = 60
 ALOCACAO_MINIMA_FRONTEIRA = 0.01
+MINIMO_OBSERVACOES_SHARPE = 60
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,14 @@ class ResultadoFronteira:
     retornos_anuais_fundos: pd.Series
     riscos_anuais_fundos: pd.Series
     carteira_unica: bool = False
+
+
+@dataclass(frozen=True)
+class ResultadoMaiorSharpe:
+    pesos: pd.Series
+    sharpe: float
+    retorno: float
+    risco: float
 
 
 def carregar_cotas(
@@ -83,6 +92,127 @@ def historico_carteira_sem_rebalanceamento(
     total = valores.sum(axis="columns")
     pesos_ao_longo_do_tempo = valores.divide(total, axis="index")
     return total.divide(total.iloc[0]).multiply(100.0).rename("Carteira"), pesos_ao_longo_do_tempo
+
+
+def _excessos_e_fator_sharpe(historico: pd.Series, cdi: pd.Series) -> tuple[pd.Series, float]:
+    """Sharpe histórico anualizado contra CDI acumulado (mesma convenção das cotas).
+
+    Usa retornos simples e desvio-padrão amostral dos excessos. O índice do CDI
+    define as sessões: reindexar antes de pct_change acumula o CDI nas lacunas
+    da carteira. Nesses casos, a anualização usa a duração média dos intervalos
+    como aproximação, sem interpolar cotas ou supor retorno zero.
+    """
+    historico = historico.dropna().sort_index()
+    cdi = cdi.sort_index()
+    for serie in (historico, cdi):
+        if (not isinstance(serie.index, pd.DatetimeIndex)
+                or serie.index.has_duplicates or serie.index.hasnans):
+            raise ValueError("O Sharpe exige datas válidas e únicas.")
+        if not np.isfinite(serie.to_numpy(dtype=float)).all() or (serie <= 0).any():
+            raise ValueError("O Sharpe exige valores positivos e finitos para a carteira e o CDI.")
+    if len(historico) - 1 < MINIMO_OBSERVACOES_SHARPE:
+        raise ValueError(f"São necessários ao menos {MINIMO_OBSERVACOES_SHARPE} retornos para calcular o Sharpe.")
+    posicoes = cdi.index.get_indexer(historico.index)
+    if (posicoes < 0).any():
+        raise ValueError("O CDI não cobre todas as datas da carteira no período efetivo.")
+    retornos = historico.pct_change(fill_method=None).iloc[1:]
+    retornos_cdi = cdi.reindex(historico.index).pct_change(fill_method=None).iloc[1:]
+    excessos = retornos - retornos_cdi
+    if not np.isfinite(excessos.to_numpy()).all():
+        raise ValueError("Não foi possível calcular retornos finitos para o Sharpe.")
+    sessoes_por_intervalo = float(np.diff(posicoes).mean())
+    return excessos, float(np.sqrt(DIAS_UTEIS_ANO / sessoes_por_intervalo))
+
+
+def calcular_sharpe(historico: pd.Series, cdi: pd.Series) -> float:
+    """Sharpe histórico anualizado da carteira sem rebalanceamento contra CDI."""
+    excessos, fator = _excessos_e_fator_sharpe(historico, cdi)
+    desvio = float(excessos.std(ddof=1))
+    if desvio <= 1e-12:
+        raise ValueError("A volatilidade do excesso de retorno é nula ou praticamente zero.")
+    return float(excessos.mean() / desvio * fator)
+
+
+def calcular_sharpe_carteira_estatica(
+    cotas: pd.DataFrame, pesos: pd.Series, cdi: pd.Series,
+) -> float:
+    """Sharpe com pesos constantes, compatível com as métricas da fronteira."""
+    pesos = pesos.reindex(cotas.columns).astype(float)
+    if not np.isfinite(pesos).all() or (pesos < 0).any() or not np.isclose(pesos.sum(), 1):
+        raise ValueError("Os pesos devem ser não negativos e totalizar 100%.")
+    if cotas.isna().any().any():
+        raise ValueError("O Sharpe exige cotas comuns a todos os fundos.")
+    excessos = {}
+    for coluna in cotas:
+        excessos[coluna], fator = _excessos_e_fator_sharpe(cotas[coluna], cdi)
+    carteira = pd.DataFrame(excessos).dot(pesos)
+    desvio = float(carteira.std(ddof=1))
+    if not np.isfinite(desvio) or desvio <= 1e-12:
+        raise ValueError("A volatilidade do excesso de retorno é nula ou inválida.")
+    return float(carteira.mean() / desvio * fator)
+
+
+def calcular_maior_sharpe_na_fronteira(
+    cotas: pd.DataFrame, cdi: pd.Series, fronteira: ResultadoFronteira,
+    pesos_fixos: dict[str, float] | None = None,
+    alocacao_minima: float = ALOCACAO_MINIMA_FRONTEIRA,
+) -> ResultadoMaiorSharpe:
+    """Maximiza o Sharpe com pesos estáticos no ramo eficiente de Markowitz.
+
+    Avalia a curva e refina os máximos locais em retorno-alvo, incluindo extremos.
+    O histórico exibido depois usa esses pesos apenas como alocação inicial.
+    """
+    base, livres = validar_alocacoes_fixas(list(cotas.columns), pesos_fixos, alocacao_minima)
+    cotas = cotas.sort_index()
+    if cotas.isna().any().any() or not np.isfinite(cotas.to_numpy()).all() or (cotas <= 0).any().any():
+        raise ValueError("A otimização do Sharpe exige cotas comuns positivas e finitas.")
+    # Valida datas/cobertura e usa a mesma anualização do indicador histórico.
+    _, fator = _excessos_e_fator_sharpe(cotas.iloc[:, 0], cdi)
+    retornos = cotas.pct_change(fill_method=None).iloc[1:]
+    retornos_cdi = cdi.reindex(cotas.index).pct_change(fill_method=None).iloc[1:]
+    excessos = retornos.subtract(retornos_cdi, axis=0)
+    medias_excesso = excessos.mean().to_numpy()
+    cov_excesso = excessos.cov().to_numpy()
+    medias = retornos.mean().to_numpy() * DIAS_UTEIS_ANO
+    cov = retornos.cov().to_numpy() * DIAS_UTEIS_ANO
+
+    def avaliar(pesos):
+        desvio = _risco(pesos, cov_excesso)
+        return float(pesos @ medias_excesso / desvio * fator) if desvio > 1e-12 else -np.inf
+
+    pontos = fronteira.pontos.loc[
+        fronteira.pontos.retorno >= fronteira.retorno_minimo_risco - 1e-12
+    ].sort_values('retorno')
+    candidatos = [np.asarray(p, dtype=float) for p in pontos.pesos]
+    valores = [avaliar(p) for p in candidatos]
+    if not any(np.isfinite(valores)):
+        raise ValueError("A volatilidade dos excessos é nula nas carteiras da fronteira.")
+    alvos = pontos.retorno.to_numpy()
+
+    def pesos_alvo(alvo):
+        return _otimizar_minima_variancia(medias, cov, alvo, alocacao_minima, base, livres)
+
+    for i in range(len(alvos)):
+        if ((i == 0 or valores[i] >= valores[i - 1])
+                and (i == len(alvos) - 1 or valores[i] >= valores[i + 1])):
+            inferior, superior = alvos[max(0, i - 1)], alvos[min(len(alvos) - 1, i + 1)]
+            if superior - inferior <= 1e-12:
+                continue
+            resultado = minimize_scalar(
+                lambda alvo: -avaliar(pesos_alvo(alvo)), bounds=(inferior, superior),
+                method='bounded', options={'xatol': 1e-10},
+            )
+            if not resultado.success:
+                raise RuntimeError("A otimização do Sharpe não convergiu.")
+            candidatos.append(pesos_alvo(resultado.x))
+    melhor = max(candidatos, key=avaliar)
+    sharpe = avaliar(melhor)
+    if not np.isfinite(sharpe):
+        raise ValueError("A volatilidade dos excessos é nula nas carteiras da fronteira.")
+    return ResultadoMaiorSharpe(
+        pesos=pd.Series(melhor, index=cotas.columns), sharpe=sharpe,
+        retorno=float(melhor @ medias), risco=_risco(melhor, cov),
+    )
 
 
 def _risco(pesos: np.ndarray, covariancia_anual: np.ndarray) -> float:

@@ -164,6 +164,33 @@ novos aparecem na próxima interação após o TTL; uma tela inativa não se atu
 sozinha. O cache de benchmarks continua com seis horas. O aplicativo lê CDI e
 Ibovespa do PostgreSQL e não acessa as fontes externas durante a consulta do usuário.
 
+O painel da carteira apresenta o **Sharpe histórico anualizado**, calculado sobre
+o histórico sem rebalanceamento e o CDI do mesmo período efetivo, independentemente
+do benchmark selecionado no gráfico. Para retornos diários, usa
+`média(retorno_carteira − retorno_CDI) / desvio_amostral(excessos) × √252`.
+São necessários ao menos 60 retornos. O CDI é alinhado às datas das cotas antes
+do cálculo dos retornos, acumulando as taxas nas lacunas. Quando os intervalos
+abrangem mais de uma sessão do CDI, o fator de anualização é
+`√(252 / número médio de sessões por intervalo)`. Essa aproximação pressupõe
+ausência de autocorrelação relevante; intervalos irregulares reduzem sua precisão.
+Sem cobertura do CDI nas datas da carteira, com dados inválidos ou volatilidade
+dos excessos menor ou igual a `1e-12`, o painel mostra “—” e explica o motivo.
+O Sharpe é adimensional e usa o desvio dos excessos; a volatilidade exibida no
+indicador vizinho continua sendo calculada com pesos estáticos.
+Referência: [William Sharpe, The Sharpe Ratio (1994)](https://web.stanford.edu/~wfsharpe/art/sr/sr.htm).
+
+A carteira **Maior Sharpe** é calculada no ramo eficiente de Markowitz, a partir
+da carteira de menor risco até a de maior retorno esperado. A busca avalia os
+pontos da curva e refina numericamente os máximos em retorno-alvo, usando o
+CDI, os pesos estáticos, o piso por fundo e as alocações travadas. Inclui os
+extremos e permite índices negativos (escolhe o menos negativo nesse ramo).
+O resultado aparece como pequeno círculo colorido na fronteira, no resumo de pesos e métricas
+e no gráfico final, junto de **Sua carteira**, **Menor risco**, **Maior retorno
+esperado** e do benchmark selecionado. Sem CDI suficiente, as outras carteiras
+continuam disponíveis e a ausência da carteira de maior Sharpe é explicada.
+Os históricos comparativos usam alocações iniciais sem rebalanceamento; seu
+Sharpe realizado pode diferir do índice com pesos estáticos usado na otimização.
+
 O aplicativo oferece cada combinação de CNPJ e subclasse como uma opção
 independente. É possível selecionar duas subclasses do mesmo CNPJ, comparar
 seus retornos e atribuir pesos separados na carteira. O campo `nomes_subclasses`

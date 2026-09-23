@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from analytics import calcular_fronteira_eficiente, validar_alocacoes_fixas
+from analytics import calcular_fronteira_eficiente, calcular_maior_sharpe_na_fronteira, validar_alocacoes_fixas
 
 
 class AlocacoesFixasTest(unittest.TestCase):
@@ -18,6 +18,63 @@ class AlocacoesFixasTest(unittest.TestCase):
     def calcular(self, fixos=None, **kwargs):
         return calcular_fronteira_eficiente(self.cotas, quantidade_pontos=12,
                                             quantidade_simulacoes=100, pesos_fixos=fixos, **kwargs)
+
+    def test_maior_sharpe_com_trava_contra_busca_independente(self):
+        for taxa in (.0001, .01):
+            with self.subTest(taxa=taxa):
+                cdi = pd.Series(100 * (1 + taxa) ** np.arange(len(self.cotas)), index=self.cotas.index)
+                fronteira = self.calcular({'a': .15})
+                resultado = calcular_maior_sharpe_na_fronteira(self.cotas, cdi, fronteira, {'a': .15})
+                retornos = self.cotas.pct_change().dropna()
+                b = np.linspace(.01, .84, 20001)
+                grade = np.column_stack([np.full(len(b), .15), b, .85 - b])
+                medias = retornos.mean().to_numpy() * 252
+                grade = grade[grade @ medias >= fronteira.retorno_minimo_risco]
+                excessos = retornos.to_numpy() @ grade.T - taxa
+                sharpes = excessos.mean(axis=0) / excessos.std(axis=0, ddof=1) * np.sqrt(252)
+                self.assertGreaterEqual(resultado.sharpe, sharpes.max() - 1e-6)
+                self.assertAlmostEqual(resultado.pesos['a'], .15, places=12)
+                self.assertAlmostEqual(resultado.pesos.sum(), 1, places=12)
+                self.assertGreaterEqual(resultado.pesos.min(), .01 - 1e-10)
+                self.assertGreaterEqual(resultado.retorno, fronteira.retorno_minimo_risco - 1e-9)
+                observados = retornos.to_numpy() @ resultado.pesos.to_numpy() - taxa
+                self.assertAlmostEqual(resultado.sharpe, observados.mean() / observados.std(ddof=1) * np.sqrt(252))
+                if taxa == .01:
+                    self.assertLess(resultado.sharpe, 0)
+
+    def test_maior_sharpe_carteira_unica(self):
+        cdi = pd.Series(100 * 1.0001 ** np.arange(len(self.cotas)), index=self.cotas.index)
+        for fixos in ({'a': .15, 'b': .25}, {'a': .15, 'b': .25, 'c': .6}):
+            fronteira = self.calcular(fixos)
+            resultado = calcular_maior_sharpe_na_fronteira(self.cotas, cdi, fronteira, fixos)
+            np.testing.assert_allclose(resultado.pesos, [.15, .25, .6])
+
+    def test_maior_sharpe_refina_solucao_interior(self):
+        rng = np.random.default_rng(56)
+        ruido = rng.normal(size=(120, 2))
+        ruido -= ruido.mean(axis=0)
+        ortogonais, _ = np.linalg.qr(ruido)
+        retornos = ortogonais * np.sqrt(119) * [.01, .02] + [.0006, .0009]
+        cotas = pd.DataFrame(100 * np.vstack([np.ones(2), np.cumprod(1 + retornos, axis=0)]),
+                             index=pd.bdate_range('2025-01-02', periods=121), columns=['a', 'b'])
+        cdi = pd.Series(100 * 1.0001 ** np.arange(121), index=cotas.index)
+        fronteira = calcular_fronteira_eficiente(cotas, quantidade_pontos=5)
+        resultado = calcular_maior_sharpe_na_fronteira(cotas, cdi, fronteira)
+        # Solução analítica: pesos proporcionais a inversa(cov) × excesso médio.
+        tangencia = np.array([.0005 / .01**2, .0008 / .02**2])
+        tangencia /= tangencia.sum()
+        np.testing.assert_allclose(resultado.pesos, tangencia, atol=1e-5)
+
+    def test_maior_sharpe_sem_cobertura_cdi(self):
+        cdi = pd.Series(100., index=self.cotas.index[:-1])
+        with self.assertRaisesRegex(ValueError, 'não cobre'):
+            calcular_maior_sharpe_na_fronteira(self.cotas, cdi, self.calcular())
+
+    def test_maior_sharpe_com_excesso_nulo(self):
+        cotas = self.cotas.assign(b=self.cotas.a, c=self.cotas.a)
+        fronteira = calcular_fronteira_eficiente(cotas)
+        with self.assertRaisesRegex(ValueError, 'volatilidade dos excessos é nula'):
+            calcular_maior_sharpe_na_fronteira(cotas, cotas.a, fronteira)
 
     def test_quinze_porcento_e_minimo_por_busca_independente(self):
         r = self.calcular({'a': .15})
