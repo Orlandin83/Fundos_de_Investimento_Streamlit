@@ -13,6 +13,9 @@ GRANT USAGE ON SCHEMA public TO fundos_app, fundos_coletor;
 GRANT SELECT ON public.fundos, public.cotas_diarias, public.fundos_controle,
     public.benchmarks_diarios TO fundos_app, fundos_coletor;
 GRANT SELECT, INSERT ON public.simulacoes TO fundos_app;
+GRANT INSERT ON public.avaliacoes TO fundos_app;
+DROP POLICY IF EXISTS avaliacoes_backend_insercao ON public.avaliacoes;
+CREATE POLICY avaliacoes_backend_insercao ON public.avaliacoes FOR INSERT TO fundos_app WITH CHECK (true);
 GRANT INSERT, UPDATE ON public.fundos, public.cotas_diarias TO fundos_coletor;
 GRANT SELECT, INSERT, UPDATE ON public.cargas TO fundos_coletor;
 GRANT INSERT, UPDATE ON public.benchmarks_diarios TO fundos_coletor;

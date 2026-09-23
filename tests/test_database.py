@@ -17,6 +17,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict
 
 from analytics import carregar_cotas
+from feedback import registrar_feedback
 from cnpj import ArquivoCVM, carregar_fundos, criar_parser, executar, processar_arquivo
 from database import (
     aplicar_schema, conectar_banco, consultar_benchmark, listar_fundos,
@@ -40,13 +41,21 @@ class PostgreSQLTest(unittest.TestCase):
     def setUp(self):
         self.conexao = conectar_banco()
         self.addCleanup(self.conexao.close)
-        self.conexao.execute('TRUNCATE public.cotas_diarias, public.fundos, public.cargas, public.simulacoes, public.benchmarks_diarios')
+        self.conexao.execute('TRUNCATE public.cotas_diarias, public.fundos, public.cargas, public.simulacoes, public.benchmarks_diarios, public.avaliacoes')
         self.agora = datetime.now(timezone.utc)
         self.cnpj = '00000000000001'
         upsert_lote(self.conexao, 'fundos', [(self.cnpj, 'Fundo teste', self.agora)])
 
     def registro(self, valor=1.2345678901234567, dia=1, subclasse=''):
         return (self.cnpj, subclasse, date(2026, 1, dia), valor, 'teste.zip', self.agora)
+
+    def test_avaliacoes_idempotentes_e_restricoes(self):
+        identificador = uuid4()
+        for _ in range(2):
+            registrar_feedback(identificador, {'facilidade': 5, 'clareza': None, 'utilidade': 1}, 'Sugestão', False)
+        self.assertEqual(self.conexao.execute('SELECT COUNT(*) FROM public.avaliacoes').fetchone()[0], 1)
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.conexao.execute('INSERT INTO public.avaliacoes (id, facilidade) VALUES (%s, 6)', [uuid4()])
 
     def test_upsert_idempotencia_correcao_subclasse_e_precisao(self):
         r = upsert_lote(self.conexao, 'cotas_diarias', [self.registro()])

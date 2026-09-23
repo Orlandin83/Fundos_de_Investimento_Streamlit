@@ -330,3 +330,68 @@ também não cria outro projeto Supabase e não precisa de Secrets de produção
 A pasta `dados/` é usada apenas para o cache temporário `dados/cache_cvm/`.
 O coletor a recria quando necessário; os ZIPs são apagados após a carga, exceto
 quando `--manter-cache` é informado.
+
+## Avaliações anônimas e novidades
+
+O botão **Avaliar e sugerir melhorias**, no rodapé, abre um formulário com três
+questões de 1 a 5 estrelas (facilidade, clareza e utilidade) e comentário opcional.
+Nenhuma nota vem pré-selecionada; é necessário informar pelo menos uma nota ou
+um comentário. Não há campos de nome, e-mail, telefone, CPF ou login. As respostas
+não são vinculadas a fundos, carteiras, IP, navegador ou identificador de usuário.
+Um UUID aleatório identifica somente o envio e impede duplicações em tentativas
+de reenvio. Após o sucesso, a sessão não aceita outra resposta; abrir outra sessão
+permite novo envio, portanto isso não equivale a um controle por pessoa.
+
+O formulário pede para não incluir dados pessoais no comentário. Texto livre
+pode contê-los espontaneamente: revise antes de compartilhar. A autorização
+para publicar um trecho é opcional, vem desmarcada e não condiciona o envio.
+Não há leitura pública de respostas ou médias. Logs de infraestrutura do provedor
+não são controlados por esse formulário.
+
+### Preparar o banco existente
+
+Execute uma vez com `DATABASE_URL` do proprietário, no ambiente local:
+
+```bash
+.venv/bin/python feedback.py --aplicar-schema
+```
+
+Alternativamente, execute `supabase/feedback.sql` no SQL Editor do projeto atual.
+A migração é idempotente, cria `public.avaliacoes`, ativa RLS e bloqueia os papéis
+públicos `anon` e `authenticated`. Se `fundos_app` já existir, concede apenas INSERT
+com a política correspondente. Em instalações novas, `database.py --aplicar-schema`
+também aplica essa migração antes de `supabase/backend_roles.sql`.
+O login backend do site deve ser proprietário ou membro de `fundos_app`.
+A conexão local usada para exportar precisa de SELECT (o proprietário já tem).
+Não conceda leitura aos visitantes nem exponha a conexão no frontend.
+
+### Baixar para seu computador
+
+No diretório do projeto, com a conexão local configurada no `.env`, execute:
+
+```bash
+.venv/bin/python feedback.py
+```
+
+O comando atualiza um snapshot completo, sem apagar registros do banco:
+
+- `dados/feedback/avaliacoes.csv`: data UTC, notas, comentários, autorização e ID do envio.
+- `dados/feedback/resumo.csv`: médias e distribuição de notas por questão e geral.
+
+A média geral considera todas as notas respondidas; campos em branco não contam
+como zero. A quantidade de avaliações é informada no terminal. Os arquivos usam
+UTF-8 com BOM e ponto e vírgula, para abertura no Excel. Comentários que poderiam
+ser interpretados como fórmulas recebem um apóstrofo de proteção no CSV; o banco
+preserva o original. Toda a pasta está no `.gitignore`. O comando não imprime os
+comentários no terminal e os arquivos são criados com acesso restrito ao usuário.
+Não existe download de respostas na página pública. As médias ficam somente no
+arquivo local nesta etapa; sua publicação futura exige uma alteração explícita.
+
+### Publicar uma novidade
+
+Edite `novidades.json` e publique o aplicativo normalmente. Cada item contém
+`data` (AAAA-MM-DD), `titulo` e `descricao`. Opcionalmente, acrescente
+`trecho_feedback` com um trecho revisado de um comentário cujo `autoriza_trecho`
+seja verdadeiro. Remova dados pessoais antes de publicar; nunca copie o arquivo
+completo de avaliações para o repositório. As cinco novidades mais recentes
+aparecem no rodapé. Os comentários não são publicados automaticamente.

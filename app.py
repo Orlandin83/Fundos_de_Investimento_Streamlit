@@ -14,6 +14,7 @@ import streamlit as st
 
 from database import ErroBanco, total_simulacoes
 from simulation_counter import contar_analise
+from rodape_feedback import exibir_rodape_feedback
 
 from analytics import (
     ALOCACAO_MINIMA_FRONTEIRA,
@@ -903,6 +904,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+exibir_rodape_feedback()
 
 try:
     st.caption(f"Simulações de carteira concluídas no site: {obter_total_simulacoes():,}".replace(",", "."))

@@ -101,6 +101,7 @@ def operacao_banco():
 def aplicar_schema() -> None:
     with operacao_banco() as conexao:
         conexao.execute((BASE_DIR / 'supabase' / 'schema.sql').read_text())
+        conexao.execute((BASE_DIR / 'supabase' / 'feedback.sql').read_text())
 
 
 def consultar_dataframe(conexao, consulta, parametros=None) -> pd.DataFrame:
