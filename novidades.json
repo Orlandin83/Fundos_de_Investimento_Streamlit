@@ -1,7 +1,8 @@
 [
   {
-    "data": "2026-09-23",
-    "titulo": "Compare também a carteira de maior Sharpe",
-    "descricao": "A carteira de maior Sharpe agora aparece na fronteira eficiente, no resumo de alocações e no gráfico final, junto da sua carteira, da carteira de menor risco e da de maior retorno. Os três cards das carteiras otimizadas exibem Sharpe, retorno e risco."
+    "data": "2026-10-02",
+    "titulo": "Exporte sua análise em PDF",
+    "trecho_feedback": "seria possivel gerar em PDF?",
+    "descricao": "Sugestão atendida: o botão Gerar PDF, no topo da página, abre um relatório com fundo branco, gráficos, tabelas de alocações e indicadores, organizado em quantas páginas forem necessárias. Para salvar, clique em Salvar como PDF / Imprimir e selecione A4 horizontal. O relatório inclui metodologia, fontes e aviso importante sobre investimentos."
   }
 ]

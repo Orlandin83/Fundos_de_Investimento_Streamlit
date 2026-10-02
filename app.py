@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
+from relatorio_pdf import gerar_html, script_botao
+from avisos import aviso_investimento_html
 
 from html import escape
 
@@ -126,6 +129,11 @@ st.markdown(
         font-size: .82rem; line-height: 1.55;
     }
     .fontes-rodape strong { color: #bdcce5; }
+    .aviso-rodape {
+        margin-top: 1.2rem; padding-top: .8rem; border-top: 1px solid #294875;
+        font-size: .7rem; line-height: 1.5; color: #A2B8DA;
+    }
+    .aviso-rodape p { font-size: inherit; color: inherit; margin: .4rem 0; }
     div[data-testid="stMetric"] {
         background: linear-gradient(145deg, #123570, #102B59);
         border: 1px solid #294875; padding: .85rem 1rem; border-radius: 12px;
@@ -157,6 +165,24 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+st.html(
+    Path(__file__).with_name("exportar_pdf.html"),
+    unsafe_allow_javascript=True,
+)
+
+figuras_pdf = []
+tabelas_pdf = []
+indicadores_pdf = {}
+
+
+def exibir_grafico(figura, **kwargs):
+    titulo = figura.layout.title.text or "Composição da carteira"
+    if titulo == "Rentabilidade acumulada":
+        titulo = "Rentabilidade dos fundos" if not figuras_pdf else "Rentabilidade da carteira"
+    figuras_pdf.append((titulo, figura, "Período e alocações informados no resumo do relatório."))
+    st.plotly_chart(figura, **kwargs)
 
 
 @st.cache_data(ttl=300, max_entries=128, show_spinner=False)
@@ -482,7 +508,7 @@ with st.container():
                     )
                     st.info(f"**Período efetivo dos fundos: {cotas.index.min():%d/%m/%Y} a {cotas.index.max():%d/%m/%Y}**")
                     retornos_grafico = retorno_acumulado_base_100(performance_exibida)
-                    st.plotly_chart(
+                    exibir_grafico(
                         grafico_linhas(
                             retornos_grafico,
                             "Rentabilidade acumulada",
@@ -502,6 +528,10 @@ with st.container():
                             "Rentabilidade na janela": retornos_totais.values,
                         }
                     ).sort_values("Rentabilidade na janela", ascending=False)
+                    resumo_pdf = resumo.copy()
+                    resumo_pdf["Data inicial efetiva"] = resumo_pdf["Data inicial efetiva"].dt.strftime("%d/%m/%Y")
+                    resumo_pdf["Rentabilidade na janela"] = resumo_pdf["Rentabilidade na janela"].map(lambda v: f"{v:.2%}")
+                    tabelas_pdf.append(("Rentabilidade por fundo e benchmark", resumo_pdf))
                     with st.expander("Rentabilidade por fundo e benchmark"):
                         st.dataframe(
                             resumo.style.format(
@@ -533,7 +563,7 @@ with st.container():
                     )
                     if erro_benchmark:
                         st.warning(f"Benchmark indisponível: {erro_benchmark}")
-                    st.plotly_chart(grafico_linhas(
+                    exibir_grafico(grafico_linhas(
                         retorno_acumulado_base_100(performance_carteira),
                         "Rentabilidade acumulada", "Retorno acumulado", tracejados,
                         {**cores_grafico, historico.name: COR_CARTEIRA},
@@ -561,7 +591,7 @@ with st.container():
                     annotations=[dict(text="100%", x=.5, y=.5, showarrow=False,
                                       font=dict(size=24, color=COR_TEXTO))],
                 )
-                st.plotly_chart(figura_alocacao, width="stretch", key="grafico_alocacoes")
+                exibir_grafico(figura_alocacao, width="stretch", key="grafico_alocacoes")
                 st.caption("Alocações iniciais • histórico sem rebalanceamento")
             with metricas:
                 k1, k2, k3 = st.columns(3)
@@ -580,6 +610,7 @@ with st.container():
                         motivo_sharpe = None
                     except (ErroBanco, ErroBenchmark, ValueError) as erro:
                         motivo_sharpe = str(erro)
+                indicadores_pdf.update({"Retorno no período": retorno_texto, "Volatilidade anualizada": risco_texto, "Sharpe histórico (CDI)": sharpe_texto})
                 k1.metric("Retorno no período", retorno_texto)
                 k2.metric("Volatilidade anualizada", risco_texto,
                           help="Risco calculado com pesos estáticos e covariância dos retornos diários.")
@@ -743,7 +774,7 @@ with st.container():
                     )
                     figura.update_xaxes(gridcolor=COR_GRADE, zerolinecolor=COR_GRADE)
                     figura.update_yaxes(gridcolor=COR_GRADE, zerolinecolor=COR_GRADE)
-                    st.plotly_chart(figura, width="stretch")
+                    exibir_grafico(figura, width="stretch")
 
                     st.caption(
                         "A linha azul mostra o trecho eficiente a partir da carteira de menor risco. "
@@ -784,6 +815,10 @@ with st.container():
                 column_config={"Fundo": st.column_config.TextColumn("Fundo", width="large")},
                 hide_index=True, width="stretch", height="content",
             )
+            comparacao_pdf = comparacao.copy()
+            for coluna in ("Sua carteira", "Menor risco", "Maior retorno", "Maior Sharpe"):
+                comparacao_pdf[coluna] = comparacao_pdf[coluna].map(lambda v: "—" if pd.isna(v) else f"{v:.2%}")
+            tabelas_pdf.append(("Alocações das carteiras otimizadas", comparacao_pdf))
             coluna_minimo, coluna_maximo, coluna_sharpe = st.columns(3)
             sharpes_resumo = []
             for pesos_resumo in (fronteira.pesos_minimo_risco, fronteira.pesos_maior_retorno):
@@ -811,6 +846,13 @@ with st.container():
                           help="Sharpe anualizado contra o CDI, com pesos estáticos. Máximo no trecho eficiente da fronteira.")
                 st.metric("Retorno esperado", f"{maior_sharpe.retorno:.2%}" if maior_sharpe is not None else "—")
                 st.metric("Risco anualizado", f"{maior_sharpe.risco:.2%}" if maior_sharpe is not None else "—")
+
+            tabelas_pdf.append(("Indicadores das carteiras otimizadas (pesos estáticos)", pd.DataFrame({
+                "Carteira": ["Menor risco", "Maior retorno", "Maior Sharpe"],
+                "Retorno esperado anualizado": [f"{fronteira.retorno_minimo_risco:.2%}", f"{fronteira.retorno_maximo:.2%}", f"{maior_sharpe.retorno:.2%}" if maior_sharpe is not None else "—"],
+                "Risco anualizado": [f"{fronteira.risco_minimo:.2%}", f"{fronteira.risco_maximo_retorno:.2%}", f"{maior_sharpe.risco:.2%}" if maior_sharpe is not None else "—"],
+                "Sharpe anualizado (CDI)": [sharpes_resumo[0][0], sharpes_resumo[1][0], f"{maior_sharpe.sharpe:.2f}" if maior_sharpe is not None else "—"],
+            })))
 
             st.subheader("Resultado das carteiras")
             st.caption("Sua carteira · menor risco · maior retorno esperado · maior Sharpe · benchmark selecionado")
@@ -844,7 +886,7 @@ with st.container():
                     "Não foi possível carregar o benchmark. As carteiras otimizadas "
                     f"continuam disponíveis. Detalhe: {erro_benchmark_otimizado}"
                 )
-            st.plotly_chart(
+            exibir_grafico(
                 grafico_linhas(
                     retorno_acumulado_base_100(desempenho_otimizado),
                     "Rentabilidade acumulada das carteiras",
@@ -895,7 +937,7 @@ with st.container():
 st.markdown(
     f"""
     <div class="fontes-rodape">
-    <strong>Elaborado por Fabricio Orlandin, CFP®</strong><br><br>
+    <div class="export-author"><strong>Elaborado por Fabricio Orlandin, CFP®</strong><br><br></div>
     <strong>Fontes de dados:</strong><br>
     Fundos de investimento: Informe Diário — Portal de Dados Abertos CVM.<br>
     {FONTES_BENCHMARK['CDI']}<br>
@@ -911,3 +953,27 @@ try:
     st.caption(f"Simulações de carteira concluídas no site: {obter_total_simulacoes():,}".replace(",", "."))
 except ErroBanco:
     st.caption("Contador de simulações temporariamente indisponível.")
+
+st.markdown(
+    '<div class="aviso-rodape"><strong>Aviso importante</strong>'
+    + aviso_investimento_html() + '</div>',
+    unsafe_allow_html=True,
+)
+
+# O relatório usa dados e figuras calculados nesta execução, sem copiar a interface.
+alocacoes_pdf = pd.DataFrame({
+    "Fundo": [nomes_por_cnpj[c] for c in carteira],
+    "CNPJ / série": [rotulos[c].split("  ·  ")[-1] for c in carteira],
+    "Alocação inicial": [f"{pesos_percentuais[c]:.2f}%" for c in carteira],
+    "Otimização": ["Travado" if c in pesos_fixos else "Livre" for c in carteira],
+})
+tabelas_pdf.insert(0, ("Fundos selecionados e alocações", alocacoes_pdf))
+contexto_pdf = [
+    f"Benchmark selecionado: {benchmark_fundos}",
+    f"Período solicitado: {data_inicial:%d/%m/%Y} a {data_final:%d/%m/%Y}",
+    f"Base atualizada até {fim_banco:%d/%m/%Y}",
+    f"Total alocado: {total_pesos:.2f}%" + ("" if valido else " - alocação incompleta; simulação da carteira indisponível"),
+]
+if cotas_carteira is not None:
+    contexto_pdf.append(f"Período efetivo da carteira: {cotas_carteira.index.min():%d/%m/%Y} a {cotas_carteira.index.max():%d/%m/%Y}")
+st.html(script_botao(gerar_html(contexto_pdf, figuras_pdf, tabelas_pdf, indicadores_pdf)), unsafe_allow_javascript=True)

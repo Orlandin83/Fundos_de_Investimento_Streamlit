@@ -61,7 +61,7 @@ def exibir_rodape_feedback():
     with st.container(border=True):
         st.subheader('Novidades e melhorias')
         novidades = json.loads((BASE_DIR / 'novidades.json').read_text(encoding='utf-8'))
-        for item in sorted(novidades, key=lambda n: n['data'], reverse=True)[:5]:
+        for item in sorted(novidades, key=lambda n: n['data'], reverse=True)[:1]:
             st.markdown(f"**{item['titulo']}**")
             st.caption(date.fromisoformat(item['data']).strftime('%d/%m/%Y'))
             if item.get('trecho_feedback'):
