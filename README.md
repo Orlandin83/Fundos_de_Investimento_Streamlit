@@ -214,6 +214,25 @@ gravados para usar a seleção por subclasse. Registros sem identificador ficam
 em uma série separada, sem serem unidos automaticamente a outra subclasse.
 A consulta antiga por CNPJ simples continua rejeitando séries simultâneas.
 
+### Família Sigma
+
+Cadastro conferido e atualizado em 16/10/2026 com o
+[registro de fundos, classes e subclasses da CVM](https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip).
+Os quatro CNPJs abaixo têm classes próprias, sem subclasses vinculadas no
+cadastro consultado. Não devem ser associados às subclasses do CNPJ acima.
+
+| Nome | CNPJ | Situação verificada no projeto |
+|---|---|---|
+| CAIXA Sigma Singular | `10731794000117` | Já cadastrado como Sigma; nome atualizado, histórico preservado desde 01/12/2009. |
+| CAIXA Sigma Private | `55036101000104` | Já cadastrado como Omega Private; nome atualizado, histórico preservado desde 13/05/2024. |
+| CAIXA Sigma | `69516203000131` | Incluído; pré-operacional na CVM, ainda sem cotas no informe de outubro consultado. |
+| CAIXA Sigma Funcionários | `66034762000117` | Já cadastrado; nome padronizado conforme a CVM, histórico preservado desde 08/04/2026. |
+
+O banco utiliza as denominações completas da CVM. Os três fundos com histórico
+tinham cotas até 14/10/2026 nesta conferência. O novo Sigma permanece com status
+`SEM DADOS` até a publicação das primeiras cotas, que serão incorporadas pela
+coleta regular `cnpj.py`. A atualização não exigiu alteração de schema ou código.
+
 ## Alocações travadas na otimização
 
 Em **Monte sua carteira**, informe um percentual e marque **Travar na otimização**
