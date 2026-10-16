@@ -19,6 +19,36 @@ class DashboardTest(unittest.TestCase):
         benchmark.start()
         self.addCleanup(benchmark.stop)
 
+    def test_cdb_sozinho_misto_e_troca_de_taxa(self):
+        from cdb import CDB_ID
+        datas = pd.bdate_range('2026-01-02', periods=80)
+        fundos = pd.DataFrame({'cnpj': ['a'], 'nome': ['Fundo A']})
+        cotas = pd.DataFrame({'a': 100 * np.cumprod(1 + np.random.default_rng(7).normal(.0005, .002, 80))}, index=datas)
+        taxas = pd.Series(np.linspace(.04, .06, 80), index=datas)
+        with (patch('analytics.listar_fundos', return_value=fundos),
+              patch('analytics.limites_do_banco', return_value=(datas[0], datas[-1])),
+              patch('analytics.carregar_cotas', side_effect=lambda ids, *a, **k: cotas[list(ids)]),
+              patch('cdb.consultar_benchmark', return_value=taxas),
+              patch('database.total_simulacoes', return_value=0),
+              patch('simulation_counter.contar_analise', return_value=False)):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / 'app.py')).run(timeout=30)
+            app.multiselect[0].set_value([CDB_ID]).run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertFalse(app.error)
+            self.assertEqual(app.number_input(key='percentual_cdi_cdb').value, 100)
+            antes = app.get('plotly_chart')[0].proto.spec
+            app.number_input(key='percentual_cdi_cdb').set_value(110).run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertNotEqual(antes, app.get('plotly_chart')[0].proto.spec)
+            self.assertIn('110.00%', app.get('plotly_chart')[0].proto.spec)
+            app.multiselect[0].set_value(['a', CDB_ID]).run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertFalse(app.error)
+            app.button[0].click().run(timeout=30)
+            self.assertFalse(app.exception)
+            self.assertFalse(app.error)
+            self.assertEqual(app.number_input(key=f'peso_{CDB_ID}').value, 50)
+
     def test_linhas_estaveis_ao_ultrapassar_mil_pontos(self):
         datas = pd.bdate_range('2024-01-02', periods=501)
         ids = ['a', 'b', 'c']

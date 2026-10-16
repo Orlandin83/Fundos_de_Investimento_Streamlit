@@ -233,6 +233,29 @@ tinham cotas até 14/10/2026 nesta conferência. O novo Sigma permanece com stat
 `SEM DADOS` até a publicação das primeiras cotas, que serão incorporadas pela
 coleta regular `cnpj.py`. A atualização não exigiu alteração de schema ou código.
 
+## CDB pós-fixado simulado
+
+Na seleção de ativos, escolha **CDB pós-fixado (% do CDI)** e informe a taxa
+(inicialmente 100%). O ativo pode ser usado sozinho ou com fundos, com peso
+próprio e trava de alocação, nos gráficos, na carteira, na otimização e no PDF.
+O percentual informado integra a chave do cache; alterá-lo recalcula a série.
+
+O cálculo lê as taxas diárias percentuais do CDI já armazenadas no PostgreSQL:
+`fator_diario = 1 + (CDI_diario / 100) * (percentual_CDB / 100)`.
+Capitaliza os fatores antes de alinhar a série às datas dos fundos, preservando
+os rendimentos intermediários. A primeira observação é normalizada para 100,
+seguindo a convenção do benchmark existente: cada observação posterior incorpora
+a taxa dessa data. Assim, 100% do CDI reproduz a série do benchmark. Trata-se de
+uma simulação comparativa, sem os arredondamentos e a convenção de liquidação de
+um contrato real. A capitalização por percentual diário segue o princípio do
+[DI acumulado da B3](https://www.b3.com.br/pt_br/market-data-e-indices/indices/indices-de-segmentos-e-setoriais/di/metodologia-de-calcudo-acumulado-de-di/).
+
+A rentabilidade é bruta, sem IR, IOF ou custos; não modela vencimento, liquidez
+ou risco de crédito. O percentual é fixo em toda a janela histórica e não indica
+uma oferta disponível no passado. Não há preenchimento de taxas ausentes nem
+extrapolação além da cobertura do CDI. O ativo é gerado em memória, sem CNPJ
+fictício ou cadastro no banco. O relatório registra a taxa e essas premissas.
+
 ## Alocações travadas na otimização
 
 Em **Monte sua carteira**, informe um percentual e marque **Travar na otimização**

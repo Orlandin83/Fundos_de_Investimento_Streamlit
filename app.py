@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from cdb import CDB_ID, AVISO_CDB, incluir_cdb
 from database import ErroBanco, total_simulacoes
 from simulation_counter import contar_analise
 from rodape_feedback import exibir_rodape_feedback
@@ -192,13 +193,17 @@ def obter_fundos() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, max_entries=128, show_spinner=False)
 def obter_cotas(
-    cnpjs: tuple[str, ...], inicio: date, fim: date, datas_comuns: bool
+    cnpjs: tuple[str, ...], inicio: date, fim: date, datas_comuns: bool, percentual_cdi: float = 100.0
 ) -> pd.DataFrame:
     try:
-        return carregar_cotas(
-            cnpjs, pd.Timestamp(inicio), pd.Timestamp(fim), datas_comuns=datas_comuns
-        )
-    except (ErroBanco, ValueError) as erro:
+        fundos_reais = tuple(c for c in cnpjs if c != CDB_ID)
+        cotas = carregar_cotas(
+            fundos_reais, pd.Timestamp(inicio), pd.Timestamp(fim), datas_comuns=datas_comuns
+        ) if fundos_reais else pd.DataFrame()
+        if CDB_ID in cnpjs:
+            return incluir_cdb(cotas, cnpjs, inicio, fim, percentual_cdi, datas_comuns)
+        return cotas
+    except (ErroBanco, ErroBenchmark, ValueError) as erro:
         st.error(str(erro))
         st.stop()
 
@@ -343,6 +348,9 @@ rotulos = {
     for linha in fundos.itertuples(index=False)
 }
 
+rotulos[CDB_ID] = "CDB pós-fixado (% do CDI)  ·  Simulado (sem CNPJ)"
+nomes_por_cnpj[CDB_ID] = "CDB pós-fixado simulado"
+
 def distribuir_igualmente(cnpjs: list[str]) -> None:
     """Distribui o saldo em centésimos de percentual, preservando fixações."""
     livres = [c for c in cnpjs if not st.session_state.get(f"fixar_{c}", False)]
@@ -359,10 +367,10 @@ with st.container(border=True):
     filtro_fundos, filtro_benchmark, filtro_periodo = st.columns([2.2, 1, 1.5])
     with filtro_fundos:
         selecionados = st.multiselect(
-            "Pesquise e selecione um ou mais fundos",
-            options=fundos["cnpj"].tolist(),
+            "Pesquise e selecione fundos ou CDB",
+            options=fundos["cnpj"].tolist() + [CDB_ID],
             format_func=lambda valor: rotulos[valor],
-            placeholder="Digite parte do nome do fundo…",
+            placeholder="Digite o nome do fundo ou CDB…",
             key="fundos_performance",
         )
     with filtro_benchmark:
@@ -382,6 +390,15 @@ with st.container(border=True):
                 "a comparação começa na data inicial do fundo mais novo."
             ),
         )
+    percentual_cdi = 100.0
+    if CDB_ID in selecionados:
+        percentual_cdi = st.number_input(
+            "Taxa do CDB (% do CDI)", min_value=0.01, value=100.0,
+            step=1.0, format="%.2f", key="percentual_cdi_cdb",
+            help="Exemplo: 110 significa 110% da taxa diária do CDI.",
+        )
+        nomes_por_cnpj[CDB_ID] = f"CDB simulado — {percentual_cdi:.2f}% do CDI"
+        st.caption(AVISO_CDB)
     erro_periodo: str | None = None
     if modo_periodo == "Informar outro período":
         coluna_inicio, coluna_fim = st.columns(2)
@@ -480,6 +497,7 @@ with st.container():
                     data_inicial,
                     data_final,
                     datas_comuns=len(selecionados) > 1,
+                    percentual_cdi=percentual_cdi,
                 )
                 sem_dados = [cnpj for cnpj in selecionados if cotas.get(cnpj, pd.Series()).dropna().empty]
                 if sem_dados or cotas.empty:
@@ -548,7 +566,7 @@ with st.container():
             if not valido:
                 st.info("Defina os pesos acima, totalizando 100%, para visualizar sua carteira.")
             else:
-                cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True)
+                cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True, percentual_cdi)
                 if cotas_carteira.empty or len(cotas_carteira.columns) != len(carteira) or len(cotas_carteira) < 2:
                     st.warning("Não há cotas comuns suficientes para simular a carteira neste período.")
                     cotas_carteira = None
@@ -628,7 +646,7 @@ with st.container():
     maior_sharpe = None
     # Fixações podem ser otimizadas antes de preencher os pesos livres.
     if pesos_fixos and not valido and not erro_fixacoes:
-        cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True)
+        cotas_carteira = obter_cotas(tuple(carteira), data_inicial, data_final, True, percentual_cdi)
         if cotas_carteira.empty or len(cotas_carteira.columns) != len(carteira) or len(cotas_carteira) < 2:
             cotas_carteira = None
         pesos = pd.Series(pesos_percentuais).divide(100)
@@ -974,6 +992,8 @@ contexto_pdf = [
     f"Base atualizada até {fim_banco:%d/%m/%Y}",
     f"Total alocado: {total_pesos:.2f}%" + ("" if valido else " - alocação incompleta; simulação da carteira indisponível"),
 ]
+if CDB_ID in carteira:
+    contexto_pdf.append(f"CDB: {percentual_cdi:.2f}% do CDI. {AVISO_CDB}")
 if cotas_carteira is not None:
     contexto_pdf.append(f"Período efetivo da carteira: {cotas_carteira.index.min():%d/%m/%Y} a {cotas_carteira.index.max():%d/%m/%Y}")
 st.html(script_botao(gerar_html(contexto_pdf, figuras_pdf, tabelas_pdf, indicadores_pdf)), unsafe_allow_javascript=True)
