@@ -328,7 +328,12 @@ DATABASE_URL** com a conexão do coletor. Não use Repository Variables para sen
 O workflow `Atualizar base de fundos` usa apenas `contents: read`, executa testes,
 atualiza as cotas e depois atualiza CDI e Ibovespa no mesmo PostgreSQL. A primeira
 execução dos benchmarks começa na menor data das cotas; as seguintes reprocessam
-dez dias para incorporar correções. Se uma fonte ficar indisponível, os dados já
+dez dias para incorporar correções. A consulta do CDI usa janelas de até um ano,
+timeout de 60 segundos por requisição e até três tentativas por janela em falhas
+de consulta, com esperas de 5 e 10 segundos. Esses limites se somam às tentativas
+internas da biblioteca `python-bcb`. Os logs identificam o período e cada nova
+tentativa; se a falha persistir, o workflow encerra com erro.
+Se uma fonte ficar indisponível, os dados já
 gravados permanecem disponíveis no site. Não há `git add`, commit ou push de banco.
 
 Com a conexão configurada, execute **Run workflow** e confira:

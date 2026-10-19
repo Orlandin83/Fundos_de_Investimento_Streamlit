@@ -2,14 +2,56 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pandas as pd
+from bcb.exceptions import SGSError
 
 from benchmarks import (
+    ErroBenchmark, baixar_taxas_cdi, _periodos_sgs,
     acumular_taxas_percentuais, acumular_variacoes_fechamento,
     carregar_cdi, carregar_ibovespa,
 )
+
+
+class ColetaCDITest(unittest.TestCase):
+    def test_janelas_sem_lacunas_incluem_ano_bissexto(self):
+        self.assertEqual(list(_periodos_sgs(date(2024, 2, 29), date(2026, 3, 1))), [
+            (date(2024, 2, 29), date(2025, 2, 27)),
+            (date(2025, 2, 28), date(2026, 2, 27)),
+            (date(2026, 2, 28), date(2026, 3, 1)),
+        ])
+
+    @patch("benchmarks.time.sleep")
+    @patch("benchmarks.sgs.get")
+    def test_repete_apenas_janela_com_timeout(self, get, sleep):
+        primeira = pd.DataFrame({"CDI": [0.04]}, index=pd.to_datetime(["2024-01-02"]))
+        segunda = pd.DataFrame({"CDI": [0.05]}, index=pd.to_datetime(["2025-01-02"]))
+        get.side_effect = [primeira, SGSError("The read operation timed out"), segunda]
+
+        resultado = baixar_taxas_cdi(date(2024, 1, 1), date(2025, 1, 3))
+
+        self.assertEqual(resultado.tolist(), [0.04, 0.05])
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_args_list[1], get.call_args_list[2])
+        self.assertEqual(get.call_args.kwargs["timeout"], 60)
+        sleep.assert_called_once_with(5)
+
+    @patch("benchmarks.time.sleep")
+    @patch("benchmarks.sgs.get", side_effect=SGSError("The read operation timed out"))
+    def test_falha_persistente_informa_periodo_e_limita_tentativas(self, get, sleep):
+        with self.assertRaisesRegex(ErroBenchmark, "2026-01-01 a 2026-01-03 após 3 tentativas"):
+            baixar_taxas_cdi(date(2026, 1, 1), date(2026, 1, 3))
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [call(5), call(10)])
+
+    @patch("benchmarks.time.sleep")
+    @patch("benchmarks.sgs.get", side_effect=ValueError("resposta inválida"))
+    def test_erro_de_formato_nao_e_repetido(self, get, sleep):
+        with self.assertRaisesRegex(ErroBenchmark, "resposta inválida"):
+            baixar_taxas_cdi(date(2026, 1, 1), date(2026, 1, 3))
+        get.assert_called_once()
+        sleep.assert_not_called()
 
 
 class CalculoBenchmarksTest(unittest.TestCase):

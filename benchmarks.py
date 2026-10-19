@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import logging
+import time
 
 import pandas as pd
 import yfinance as yf
 from bcb import sgs
+from bcb.exceptions import BCBAPIServerError, BCBRateLimitError, SGSError
 
 from database import (
     ErroBanco, consultar_benchmark, operacao_banco, ultima_data_benchmark, upsert_lote,
@@ -28,6 +31,9 @@ FONTES_BENCHMARK = {
 
 CODIGO_CDI_SGS = 12
 TICKER_IBOVESPA = "^BVSP"
+logger = logging.getLogger(__name__)
+TENTATIVAS_CDI = 3
+TIMEOUT_CDI = 60
 
 
 class ErroBenchmark(RuntimeError):
@@ -76,13 +82,33 @@ def acumular_variacoes_fechamento(fechamentos: pd.Series, nome: str) -> pd.Serie
 
 
 def _periodos_sgs(inicio: date, fim: date):
-    """Divide consultas diárias do SGS em janelas inferiores a dez anos."""
+    """Limita o volume de cada consulta diária do SGS a um ano."""
     cursor = inicio
     while cursor <= fim:
-        limite = (pd.Timestamp(cursor) + pd.DateOffset(years=9)).date() - timedelta(days=1)
+        limite = (pd.Timestamp(cursor) + pd.DateOffset(years=1)).date() - timedelta(days=1)
         fim_janela = min(fim, limite)
         yield cursor, fim_janela
         cursor = fim_janela + timedelta(days=1)
+
+
+def _consultar_janela_cdi(inicio: date, fim: date) -> pd.DataFrame:
+    for tentativa in range(1, TENTATIVAS_CDI + 1):
+        try:
+            return sgs.get(
+                {"CDI": CODIGO_CDI_SGS}, start=inicio, end=fim, timeout=TIMEOUT_CDI,
+            )
+        except (SGSError, BCBAPIServerError, BCBRateLimitError, TimeoutError, ConnectionError) as erro:
+            if tentativa == TENTATIVAS_CDI:
+                raise ErroBenchmark(
+                    f"Falha ao consultar o CDI no Banco Central no período "
+                    f"{inicio} a {fim} após {tentativa} tentativas: {erro}"
+                ) from erro
+            espera = 5 * 2 ** (tentativa - 1)
+            logger.warning(
+                "CDI %s a %s: tentativa %s/%s falhou (%s). Nova tentativa em %ss.",
+                inicio, fim, tentativa, TENTATIVAS_CDI, erro, espera,
+            )
+            time.sleep(espera)
 
 
 def baixar_taxas_cdi(inicio: date, fim: date) -> pd.Series:
@@ -91,14 +117,11 @@ def baixar_taxas_cdi(inicio: date, fim: date) -> pd.Series:
     partes: list[pd.Series] = []
     try:
         for inicio_janela, fim_janela in _periodos_sgs(inicio, fim):
-            dados = sgs.get(
-                {"CDI": CODIGO_CDI_SGS},
-                start=inicio_janela,
-                end=fim_janela,
-                timeout=30,
-            )
+            dados = _consultar_janela_cdi(inicio_janela, fim_janela)
             if not dados.empty:
                 partes.append(dados.iloc[:, 0])
+    except ErroBenchmark:
+        raise
     except Exception as erro:
         raise ErroBenchmark(f"Falha ao consultar o CDI no Banco Central: {erro}") from erro
     if not partes:
