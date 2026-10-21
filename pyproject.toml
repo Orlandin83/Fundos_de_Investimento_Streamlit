@@ -1,0 +1,21 @@
+[project]
+name = "fundos-caixa"
+version = "0.1.0"
+description = "Comparação de fundos CAIXA e simulação de carteiras com Streamlit"
+requires-python = ">=3.13,<3.15"
+dependencies = [
+    "pandas>=3.0,<4",
+    "numpy>=2.3.3,<2.8",
+    "psycopg[binary]>=3.2,<4",
+    "python-dotenv>=1,<2",
+    "numbers-parser>=4.19,<5",
+    "certifi>=2026.7.22",
+    "streamlit>=1.61,<2",
+    "plotly>=6.9,<7",
+    "scipy>=1.18,<2",
+    "python-bcb>=0.4,<1",
+    "yfinance>=1.5,<2",
+]
+
+[tool.uv]
+package = false

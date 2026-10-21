@@ -4,6 +4,42 @@ Streamlit para comparar cotas, carteiras e fronteira eficiente. O backend usa
 PostgreSQL fornecido pelo **mesmo projeto Supabase**, incluindo o contador de
 simulações. Não é necessário criar outro banco/projeto para o contador.
 
+## Ambiente e dependências com uv
+
+Instale o [uv](https://docs.astral.sh/uv/getting-started/installation/) e, após
+clonar o repositório, execute:
+
+```bash
+uv sync --locked
+uv run --locked streamlit run app.py
+```
+
+O uv cria e sincroniza a `.venv` automaticamente; não é necessário ativá-la.
+A versão padrão é Python 3.14, definida em `.python-version`. O projeto suporta
+Python 3.13 e 3.14, ambos verificados no CI. Para usar 3.13 explicitamente,
+use `uv sync --locked --python 3.13` e `uv run --locked --python 3.13 ...`.
+Configure o `.env` local conforme `.env.example`; credenciais não são copiadas
+pelo uv. No IDE, selecione o interpretador da `.venv` deste projeto.
+
+As dependências diretas ficam em `pyproject.toml`; `uv.lock` fixa a resolução
+completa para instalações reproduzíveis. Versione ambos e `.python-version`.
+Para adicionar ou atualizar uma dependência:
+
+```bash
+uv add nome-da-biblioteca
+# Ou, para atualizar uma biblioteca já declarada:
+uv lock --upgrade-package nome-da-biblioteca
+uv sync --locked
+uv run --locked python -m unittest discover -s tests -v
+uv export --locked --no-dev --no-hashes --no-emit-project --output-file requirements.txt
+```
+
+O `requirements.txt` é mantido para sistemas que usam pip, com versões fixadas
+e marcadores de plataforma exportados do lockfile. Não o edite manualmente.
+Nesses sistemas, use Python 3.13 ou 3.14 e
+`python -m pip install -r requirements.txt`. O CI verifica se a exportação está
+atualizada. Atualizações de dependências devem incluir o lockfile e a exportação.
+
 ## Arquitetura
 
 ```text
@@ -89,13 +125,13 @@ Referências: [conexões Supabase](https://supabase.com/docs/guides/database/con
 O projeto em uso já possui os dados no Supabase. Para configurar outra instalação:
 
 ```bash
-python -m pip install -r requirements.txt
-python database.py --aplicar-schema
+uv sync --locked
+uv run --locked python database.py --aplicar-schema
 ```
 
-Cadastre os fundos com `python adicionar_fundo.py`, conforme abaixo, ou
+Cadastre os fundos com `uv run --locked python adicionar_fundo.py`, conforme abaixo, ou
 diretamente na tabela `fundos` (CNPJ, nome e `atualizado_em`).
-Execute `python cnpj.py --meses-reprocessar 2` para carregar o histórico da CVM.
+Execute `uv run --locked python cnpj.py --meses-reprocessar 2` para carregar o histórico da CVM.
 A primeira coleta percorre os arquivos disponíveis e pode demorar.
 Não há armazenamento persistente de cotas em arquivos locais.
 
@@ -104,7 +140,7 @@ Não há armazenamento persistente de cotas em arquivos locais.
 Com as dependências instaladas e `DATABASE_URL` configurada no `.env`, execute:
 
 ```bash
-python adicionar_fundo.py
+uv run --locked python adicionar_fundo.py
 ```
 
 No menu, escolha `1` para incluir, `2` para alterar o nome, `3` para excluir
@@ -139,12 +175,12 @@ novos fundos mesmo que exista uma planilha Numbers local.
 ## Executar e validar o Streamlit
 
 ```bash
-python -m pip install -r requirements.txt
-python database.py
-streamlit run app.py
+uv sync --locked
+uv run --locked python database.py
+uv run --locked streamlit run app.py
 ```
 
-`python database.py` verifica a conexão PostgreSQL e apresenta contagens/datas,
+`uv run --locked python database.py` verifica a conexão PostgreSQL e apresenta contagens/datas,
 sem mostrar credenciais. Não há fallback para banco local na aplicação.
 No Streamlit Cloud, configure `DATABASE_URL` como secret de **nível raiz**:
 o Streamlit o disponibiliza como variável de ambiente no backend. Reinicie o
@@ -299,8 +335,8 @@ evento poderá não ser contabilizado.
 ## Atualização CVM, benchmarks e GitHub Actions
 
 ```bash
-python cnpj.py --meses-reprocessar 2
-python benchmarks.py --dias-reprocessar 10
+uv run --locked python cnpj.py --meses-reprocessar 2
+uv run --locked python benchmarks.py --dias-reprocessar 10
 ```
 
 O universo vem de `fundos` no PostgreSQL, inclusive nas execuções locais.
@@ -311,7 +347,7 @@ e das novas coletas, mas seus registros existentes não são apagados.
 
 O coletor reprocessa os dois arquivos mensais mais recentes, processa pendentes
 e usa `cargas` para retomar. Correções antigas exigem reprocessamento explícito:
-`python cnpj.py --inicio 2025-01 --fim 2025-02 --forcar`.
+`uv run --locked python cnpj.py --inicio 2025-01 --fim 2025-02 --forcar`.
 Se usar `--manter-cache`, remova o ZIP correspondente ou use a janela recente
 para garantir um novo download de uma correção antiga.
 
@@ -358,13 +394,13 @@ SELECT COUNT(*) FROM public.simulacoes;
 ## Testes locais e CI
 
 ```bash
-python -m unittest discover -s tests -v
+uv run --locked python -m unittest discover -s tests -v
 ```
 
 Sem `TEST_DATABASE_URL`, testes de integração ficam explicitamente ignorados;
 os testes de cálculos e identidade do contador continuam executando. Para a
 suíte completa, configure `TEST_DATABASE_URL` para PostgreSQL **local,
-descartável**, com nome `fundos_test*`, e instale `requirements.txt`.
+descartável**, com nome `fundos_test*`, e execute `uv sync --locked`.
 Exporte a variável no shell para os testes; eles não leem essa variável de `.env`.
 Os testes truncam somente esse banco de teste e rejeitam hosts remotos ou nomes
 fora do padrão. Nunca aponte esse parâmetro para dados de produção.
@@ -400,7 +436,7 @@ não são controlados por esse formulário.
 Execute uma vez com `DATABASE_URL` do proprietário, no ambiente local:
 
 ```bash
-.venv/bin/python feedback.py --aplicar-schema
+uv run --locked python feedback.py --aplicar-schema
 ```
 
 Alternativamente, execute `supabase/feedback.sql` no SQL Editor do projeto atual.
@@ -417,7 +453,7 @@ Não conceda leitura aos visitantes nem exponha a conexão no frontend.
 No diretório do projeto, com a conexão local configurada no `.env`, execute:
 
 ```bash
-.venv/bin/python feedback.py
+uv run --locked python feedback.py
 ```
 
 O comando atualiza um snapshot completo, sem apagar registros do banco:
