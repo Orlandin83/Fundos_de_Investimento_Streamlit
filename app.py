@@ -18,6 +18,7 @@ import streamlit as st
 from cdb import CDB_ID, AVISO_CDB, incluir_cdb
 from database import ErroBanco, total_simulacoes
 from simulation_counter import contar_analise
+from projecao import exibir_projecao
 from rodape_feedback import exibir_rodape_feedback
 
 from analytics import (
@@ -193,7 +194,8 @@ def obter_fundos() -> pd.DataFrame:
 
 @st.cache_data(ttl=300, max_entries=128, show_spinner=False)
 def obter_cotas(
-    cnpjs: tuple[str, ...], inicio: date, fim: date, datas_comuns: bool, percentual_cdi: float = 100.0
+    cnpjs: tuple[str, ...], inicio: date, fim: date, datas_comuns: bool, percentual_cdi: float = 100.0,
+    interromper_em_erro: bool = True,
 ) -> pd.DataFrame:
     try:
         fundos_reais = tuple(c for c in cnpjs if c != CDB_ID)
@@ -204,6 +206,8 @@ def obter_cotas(
             return incluir_cdb(cotas, cnpjs, inicio, fim, percentual_cdi, datas_comuns)
         return cotas
     except (ErroBanco, ErroBenchmark, ValueError) as erro:
+        if not interromper_em_erro:
+            raise
         st.error(str(erro))
         st.stop()
 
@@ -931,6 +935,23 @@ with st.container():
                 "pode diferir do índice otimizado. Se todos os índices forem negativos, "
                 "é escolhido o maior (menos negativo) nesse trecho."
             )
+
+            carteiras_projecao = {}
+            if valido:
+                carteiras_projecao["Sua carteira"] = pesos
+            carteiras_projecao["Menor risco"] = fronteira.pesos_minimo_risco
+            carteiras_projecao["Maior retorno"] = fronteira.pesos_maior_retorno
+            if maior_sharpe is not None:
+                carteiras_projecao["Maior Sharpe"] = maior_sharpe.pesos
+            try:
+                cotas_projecao = obter_cotas(
+                    tuple(carteira), inicio_banco.date(), data_final, True, percentual_cdi,
+                    interromper_em_erro=False,
+                )
+                exibir_projecao(cotas_projecao, carteiras_projecao, exibir_grafico,
+                               tabelas_pdf, figuras_pdf)
+            except (ErroBanco, ErroBenchmark, ValueError) as erro:
+                st.info(f"Projeção indisponível: {erro}")
 
             with st.expander("Metodologia e limitações"):
                 st.markdown(

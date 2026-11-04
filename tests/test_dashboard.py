@@ -11,6 +11,12 @@ from streamlit.testing.v1 import AppTest
 from benchmarks import ErroBenchmark
 
 
+def graficos_historicos(app):
+    """Os testes históricos identificam seus gráficos sem depender da nova etapa."""
+    return [g for g in app.get('plotly_chart')
+            if not json.loads(g.proto.spec).get('layout', {}).get('title', {}).get('text', '').startswith('Resultados projetados')]
+
+
 class DashboardTest(unittest.TestCase):
     def setUp(self):
         st.cache_data.clear()
@@ -36,11 +42,11 @@ class DashboardTest(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
             self.assertEqual(app.number_input(key='percentual_cdi_cdb').value, 100)
-            antes = app.get('plotly_chart')[0].proto.spec
+            antes = graficos_historicos(app)[0].proto.spec
             app.number_input(key='percentual_cdi_cdb').set_value(110).run(timeout=30)
             self.assertFalse(app.exception)
-            self.assertNotEqual(antes, app.get('plotly_chart')[0].proto.spec)
-            self.assertIn('110.00%', app.get('plotly_chart')[0].proto.spec)
+            self.assertNotEqual(antes, graficos_historicos(app)[0].proto.spec)
+            self.assertIn('110.00%', graficos_historicos(app)[0].proto.spec)
             app.multiselect[0].set_value(['a', CDB_ID]).run(timeout=30)
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
@@ -65,14 +71,14 @@ class DashboardTest(unittest.TestCase):
                 with self.subTest(quantidade=quantidade):
                     app.multiselect[0].set_value(ids[:quantidade]).run(timeout=30)
                     self.assertFalse(app.exception)
-                    grafico = json.loads(app.get('plotly_chart')[0].proto.spec)
+                    grafico = json.loads(graficos_historicos(app)[0].proto.spec)
                     linhas = [t for t in grafico['data'] if t.get('mode') == 'lines']
                     self.assertEqual({t['name'] for t in linhas}, set(fundos.nome[:quantidade]))
                     self.assertTrue(all(t['type'] == 'scatter' for t in linhas))
                     self.assertTrue(all(len(t['x']) == len(datas) for t in linhas))
                     self.assertEqual(len(grafico['layout']['annotations']), quantidade)
                     if quantidade > 1:
-                        final = json.loads(app.get('plotly_chart')[-1].proto.spec)
+                        final = json.loads(graficos_historicos(app)[-1].proto.spec)
                         nomes = {t.get('name') for t in final['data'] if t.get('mode') == 'lines'}
                         self.assertEqual(nomes, {'Sua carteira', 'Menor risco', 'Maior retorno esperado'})
                         self.assertTrue(any('Carteira de maior Sharpe indisponível' in w.value for w in app.warning))
@@ -94,7 +100,7 @@ class DashboardTest(unittest.TestCase):
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
             self.assertEqual([n.value for n in app.number_input], [50, 50])
-            grafico = json.loads(app.get('plotly_chart')[0].proto.spec)
+            grafico = json.loads(graficos_historicos(app)[0].proto.spec)
             nomes = {t['name'] for t in grafico['data'] if t.get('mode') == 'lines'}
             self.assertEqual(nomes, set(fundos.nome))
 
@@ -132,8 +138,8 @@ class DashboardTest(unittest.TestCase):
             app.multiselect[0].set_value(['a', 'b', 'c']).run(timeout=30)
             self.assertFalse(app.exception)
             self.assertAlmostEqual(sum(n.value for n in app.number_input), 100)
-            self.assertEqual(len(app.get('plotly_chart')), 5)
-            rosca = json.loads(app.get('plotly_chart')[2].proto.spec)
+            self.assertEqual(len(graficos_historicos(app)), 5)
+            rosca = json.loads(graficos_historicos(app)[2].proto.spec)
             self.assertEqual(rosca['data'][0]['type'], 'pie')
             self.assertAlmostEqual(sum(rosca['data'][0]['values']), 100)
             valores = cotas.divide(cotas.iloc[0]).mean(axis=1)
@@ -150,7 +156,7 @@ class DashboardTest(unittest.TestCase):
                 d.value for d in app.dataframe if 'Restrição' in d.value.columns)['Maior Sharpe'])
             app.selectbox[0].set_value('CDI').run(timeout=30)
             self.assertFalse(app.exception)
-            grafico = json.loads(app.get('plotly_chart')[-1].proto.spec)
+            grafico = json.loads(graficos_historicos(app)[-1].proto.spec)
             linhas = [trace for trace in grafico['data'] if trace.get('mode') == 'lines']
             self.assertEqual(len(linhas), 5)
             self.assertEqual(linhas[0]['name'], 'Menor risco')
@@ -159,7 +165,7 @@ class DashboardTest(unittest.TestCase):
             self.assertEqual(linhas[3]['name'], 'Maior Sharpe')
             self.assertEqual(linhas[4]['line']['dash'], 'dash')
             self.assertEqual(len(grafico['layout']['annotations']), 5)
-            fronteira = json.loads(app.get('plotly_chart')[-2].proto.spec)
+            fronteira = json.loads(graficos_historicos(app)[-2].proto.spec)
             self.assertTrue(any(t['name'] == 'Maior Sharpe' for t in fronteira['data']))
             tabela = next(d.value for d in app.dataframe if 'Restrição' in d.value.columns)
             esperados = []
@@ -171,28 +177,28 @@ class DashboardTest(unittest.TestCase):
             app.number_input[0].set_value(10).run(timeout=30)
             self.assertFalse(app.exception)
             self.assertTrue(app.warning)
-            self.assertEqual(len(app.get('plotly_chart')), 1)
+            self.assertEqual(len(graficos_historicos(app)), 1)
             app.button[0].click().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertEqual([n.value for n in app.number_input], [33.34, 33.33, 33.33])
-            self.assertEqual(len(app.get('plotly_chart')), 5)
+            self.assertEqual(len(graficos_historicos(app)), 5)
             # Otimiza com 15% travados mesmo antes de completar os pesos livres.
             app.number_input[0].set_value(15).run(timeout=30)
             app.checkbox(key='fixar_a').check().run(timeout=30)
             self.assertFalse(app.exception)
-            self.assertEqual(len(app.get('plotly_chart')), 3)
+            self.assertEqual(len(graficos_historicos(app)), 3)
             tabela = next(d.value for d in app.dataframe if 'Restrição' in d.value.columns)
             self.assertAlmostEqual(tabela.iloc[0]['Menor risco'], .15)
             self.assertAlmostEqual(tabela.iloc[0]['Maior retorno'], .15)
             self.assertAlmostEqual(tabela.iloc[0]['Maior Sharpe'], .15)
-            grafico = json.loads(app.get('plotly_chart')[-1].proto.spec)
+            grafico = json.loads(graficos_historicos(app)[-1].proto.spec)
             nomes = {t.get('name') for t in grafico['data'] if t.get('mode') == 'lines'}
             self.assertNotIn('Sua carteira', nomes)
             self.assertIn('Maior Sharpe', nomes)
             self.assertEqual(tabela.iloc[0]['Restrição'], 'Travado')
             app.button[0].click().run(timeout=30)
             self.assertEqual([n.value for n in app.number_input], [15, 42.5, 42.5])
-            self.assertEqual(len(app.get('plotly_chart')), 5)
+            self.assertEqual(len(graficos_historicos(app)), 5)
             app.checkbox(key='fixar_b').check().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertTrue(any('única carteira' in i.value for i in app.info))
@@ -202,14 +208,14 @@ class DashboardTest(unittest.TestCase):
             # Restrições inviáveis não produzem uma falsa fronteira.
             app.number_input[0].set_value(16).run(timeout=30)
             self.assertTrue(app.error)
-            self.assertEqual(len(app.get('plotly_chart')), 1)
+            self.assertEqual(len(graficos_historicos(app)), 1)
             for c in ['a', 'b', 'c']:
                 app.checkbox(key=f'fixar_{c}').uncheck().run(timeout=30)
             app.multiselect[0].set_value(['a']).run(timeout=30)
             app.button[0].click().run(timeout=30)
             self.assertFalse(app.exception)
             self.assertEqual(app.number_input[0].value, 100)
-            self.assertEqual(len(app.get('plotly_chart')), 3)
+            self.assertEqual(len(graficos_historicos(app)), 3)
 
     def test_sharpe_indisponivel_preserva_dashboard(self):
         datas = pd.bdate_range('2025-01-02', periods=80)
@@ -239,7 +245,7 @@ class DashboardTest(unittest.TestCase):
                     self.assertFalse(app.error)
                     self.assertTrue(any(m.label == 'Índice de Sharpe' and m.value == '—' for m in app.metric))
                     self.assertTrue(any(motivo in c.value for c in app.caption))
-                    self.assertEqual(len(app.get('plotly_chart')), 3)
+                    self.assertEqual(len(graficos_historicos(app)), 3)
 
 
 if __name__ == '__main__':
