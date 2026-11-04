@@ -1,8 +1,7 @@
 [
   {
-    "data": "2026-10-02",
-    "titulo": "Exporte sua análise em PDF",
-    "trecho_feedback": "seria possivel gerar em PDF?",
-    "descricao": "Sugestão atendida: o botão Gerar PDF, no topo da página, abre um relatório com fundo branco, gráficos, tabelas de alocações e indicadores, organizado em quantas páginas forem necessárias. Para salvar, clique em Salvar como PDF / Imprimir e selecione A4 horizontal. O relatório inclui metodologia, fontes e aviso importante sobre investimentos."
+    "data": "2026-11-04",
+    "titulo": "Gráficos de distribuição normal",
+    "descricao": "Incluí gráficos de distribuição normal para analisar os retornos estimados das carteiras com níveis de confiança de 90%, 95% e 99%."
   }
 ]
