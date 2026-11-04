@@ -15,9 +15,16 @@ uv run --locked streamlit run app.py
 ```
 
 O uv cria e sincroniza a `.venv` automaticamente; não é necessário ativá-la.
-A versão padrão é Python 3.14, definida em `.python-version`. O projeto suporta
-Python 3.13 e 3.14, ambos verificados no CI. Para usar 3.13 explicitamente,
-use `uv sync --locked --python 3.13` e `uv run --locked --python 3.13 ...`.
+A versão padrão é Python 3.13, definida em `.python-version`, sem fixar uma
+versão de correção específica (como 3.13.5). O projeto suporta
+Python 3.13 e 3.14, ambos verificados no CI.
+Após mudar a versão, pare o Streamlit, execute `uv sync --locked` e inicie-o
+novamente. No Streamlit Cloud, selecione também Python 3.13 nas configurações
+de implantação; `.python-version` configura a escolha local do uv e não altera
+o interpretador de um app já publicado. Segundo a
+[documentação do Streamlit](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/upgrade-python),
+a troca de Python de um app existente exige uma nova implantação, preservando
+antes as configurações e os secrets.
 Configure o `.env` local conforme `.env.example`; credenciais não são copiadas
 pelo uv. No IDE, selecione o interpretador da `.venv` deste projeto.
 
